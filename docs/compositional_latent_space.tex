@@ -1,0 +1,177 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper, left=1.5cm,right=1.5cm,top=2cm,bottom=2cm]{geometry}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}  % Math environments and symbols
+\usepackage{amssymb}  % \mathbb and extra symbols
+\usepackage{booktabs} % Nicer tables (\toprule, \midrule, \bottomrule)
+
+\title{Compositional Latent Space}
+\author{Suresh Murugaiyan}
+\date{July 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+We train a \emph{compositional autoencoder} (Path~A of the compositional
+operator-network framework) on the FlowBench 2D lid-driven cavity dataset:
+steady Navier--Stokes flow with an object placed inside the cavity. The
+autoencoder compresses each steady flow field into a small latent vector
+$\boldsymbol{z}$ and reconstructs the field from it --- a nonlinear analogue
+of POD. The key structural choice is that $\boldsymbol{z}$ is not one opaque
+vector; it is partitioned by architecture into three named blocks, each
+intended to carry one physical factor:
+%
+\begin{equation}
+  \boldsymbol{z} \;=\;
+  [\, \underbrace{\boldsymbol{z}_{\mu}}_{\text{regime }(4)}
+  \,\|\,
+  \underbrace{\boldsymbol{z}_{g}}_{\text{geometry }(32)}
+  \,\|\,
+  \underbrace{\boldsymbol{z}_{\xi}}_{\text{residual }(16)} \,]
+  \;\in\; \mathbb{R}^{52}.
+\end{equation}
+%
+The hypothesis under test: after training, $\boldsymbol{z}_{\mu}$ should
+contain the Reynolds number, $\boldsymbol{z}_{g}$ should contain the object
+shape, and neither should leak into the other. Because the flow is steady,
+there is no dynamics block $\boldsymbol{z}_{\eta}$ and no latent propagator
+$\Phi$ in this first version; those enter later with time-dependent cases.
+
+\section{Dataset}
+
+Each FlowBench sample is a steady lid-driven cavity solution at
+$512 \times 512$ resolution. The data loader
+(\texttt{data/dataset.py}) unpacks the raw \texttt{.npz} arrays into:
+%
+\begin{itemize}
+  \item \textbf{fields} --- the $(u, v, p)$ solution, resized
+        $512^2 \to 256^2$ to keep training cheap;
+  \item \textbf{sdf} --- the signed distance field of the object
+        (the geometry label);
+  \item \textbf{mask} --- binary fluid mask ($1$ in fluid, $0$ in the solid);
+  \item \textbf{log\_re} --- the regime label. Re is stored as a constant
+        channel, so a single pixel is extracted, transformed to
+        $\log_{10}\mathrm{Re}$ (Re spans orders of magnitude), and
+        standardized with \emph{train-set} statistics; the test set reuses
+        those statistics so both splits share one scale.
+\end{itemize}
+%
+The loader also computes three cheap per-sample geometry summaries from the
+mask (solid area fraction, centroid $x$, centroid $y$). These are never used
+during training; they serve only as ground-truth targets for the linear-probe
+diagnostic of Section~\ref{sec:diagnostics}.
+
+\section{Network architecture}
+
+Four modules (\texttt{models/compositional/networks.py}):
+%
+\begin{itemize}
+  \item \textbf{FieldEncoder} $\mathcal{E}$ --- a CNN that halves the spatial
+        resolution repeatedly ($256 \to 8$), pools, and terminates in
+        \emph{three separate linear heads} producing
+        $\boldsymbol{z}_{\mu}, \boldsymbol{z}_{g}, \boldsymbol{z}_{\xi}$.
+        The blocks are architecturally separate from the start.
+  \item \textbf{FieldDecoder} $\mathcal{D}$ --- the mirror image: the
+        concatenated $\boldsymbol{z}$ is reshaped to an $8\times 8$ feature
+        map and upsampled back to a $256^2$ $(u, v, p)$ field.
+  \item \textbf{RegimeHead} --- a small MLP that reads
+        $\boldsymbol{z}_{\mu}$ \emph{only} and must predict
+        $\log \mathrm{Re}$.
+  \item \textbf{SDFHead} --- a small decoder that reads $\boldsymbol{z}_{g}$
+        \emph{only} and must redraw the object's SDF at $64 \times 64$.
+\end{itemize}
+%
+The two heads are the supervision mechanism: since the regime head sees only
+$\boldsymbol{z}_{\mu}$, the encoder is forced to route Reynolds-number
+information into that block, and likewise shape information into
+$\boldsymbol{z}_{g}$.
+
+\section{Training objective}
+
+Each optimization step combines four losses
+(\texttt{models/compositional/compositional\_ae.py}), weighted by
+$\lambda$-coefficients set in the configuration file:
+%
+\begin{enumerate}
+  \item \textbf{Masked reconstruction (L1).} MSE between decoded and true
+        fields, evaluated over fluid points only: predictions inside the
+        solid are zeroed and the error is normalized by the fluid node
+        count, so samples with large objects are not unfairly weighted.
+  \item \textbf{Regime supervision.} MSE of
+        $\mathrm{RegimeHead}(\boldsymbol{z}_{\mu})$ against the standardized
+        $\log_{10}\mathrm{Re}$. Pulls Re into $\boldsymbol{z}_{\mu}$.
+  \item \textbf{Geometry supervision.} MSE of
+        $\mathrm{SDFHead}(\boldsymbol{z}_{g})$ against the downsampled true
+        SDF. Pulls shape into $\boldsymbol{z}_{g}$.
+  \item \textbf{Cross-block decorrelation (L6).} The mean absolute Pearson
+        correlation, computed across the batch, between every coordinate of
+        one block and every coordinate of another, penalized for all three
+        block pairs. Losses~2--3 pull information \emph{into} the correct
+        block; this term pushes redundant copies \emph{out of} the wrong
+        blocks.
+\end{enumerate}
+%
+The residual block $\boldsymbol{z}_{\xi}$ receives no supervision at all: it
+is free capacity that absorbs whatever the reconstruction needs beyond
+$(\mathrm{Re}, \text{shape})$, which is exactly the role of the residual
+block in the framework.
+
+Training is driven by \texttt{main.py}: it loads the YAML configuration,
+seeds all libraries, builds the train/test datasets (passing the train
+Re-statistics to the test set), and trains with PyTorch Lightning,
+checkpointing on the best validation reconstruction error.
+
+\section{Linear-probe diagnostics}
+\label{sec:diagnostics}
+
+The diagnostic (\texttt{diagnostics/probes.py}) is the actual scientific
+test. After training, the entire test set is encoded, and for each
+(block, target) pair a ridge regression is fitted with 5-fold
+cross-validation; the resulting $R^2$ values are tabulated. For a
+compositional latent we expect the block-diagonal pattern of
+Table~\ref{tab:probes}.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Expected linear-probe $R^2$ pattern for a compositional latent
+  space. High $R^2$ on the matching block and low $R^2$ elsewhere indicates
+  a successful factorization; a high off-diagonal entry indicates leakage.}
+  \label{tab:probes}
+  \begin{tabular}{lccc}
+    \toprule
+    Target & $\boldsymbol{z}_{\mu}$ & $\boldsymbol{z}_{g}$ & $\boldsymbol{z}_{\xi}$ \\
+    \midrule
+    $\log \mathrm{Re}$    & \textbf{high} & low           & low \\
+    Area fraction         & low           & \textbf{high} & low \\
+    Centroid $x$          & low           & \textbf{high} & low \\
+    Centroid $y$          & low           & \textbf{high} & low \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+If the trained latent reproduces this pattern, the factorization worked:
+Re is linearly readable from the regime block and \emph{not} from the
+geometry block, and vice versa. A high $R^2$ in an off-diagonal cell means
+information leaked --- exactly what the planned loss ablations are designed
+to study (e.g., does removing the decorrelation penalty cause leakage?).
+
+\section{Next steps}
+
+Deliberately excluded from this first version and planned as increments once
+the baseline trains and the probe table looks sane:
+%
+\begin{itemize}
+  \item swap-consistency loss (L12): decode $\boldsymbol{z}_{\mu}$ from one
+        sample with $\boldsymbol{z}_{g}$ from another and compare against
+        the true cross-combination;
+  \item group-structured minibatches for iVAE-style identifiability;
+  \item concept-vector arithmetic diagnostic;
+  \item INR-style implicit decoder; HSIC (nonlinear) decorrelation;
+  \item dynamics block $\boldsymbol{z}_{\eta}$ and latent propagator $\Phi$
+        for time-dependent cases.
+\end{itemize}
+
+\end{document}
