@@ -1,0 +1,38 @@
+data:
+  # FlowBench 2D LDC (NS) .npz files; edit to your local paths
+  file_path_train_x: ./data/all_ldc_train_x.npz
+  file_path_train_y: ./data/all_ldc_train_y.npz
+  file_path_test_x: ./data/all_ldc_test_x.npz
+  file_path_test_y: ./data/all_ldc_test_y.npz
+  resolution: 256        # fields are bilinearly resized from 512 to this
+  batch_size: 16
+  num_workers: 6
+
+model:
+  base_channels: 32
+  latent_mu: 4           # regime block (log Re lives here)
+  latent_g: 32           # geometry block (object shape lives here)
+  latent_xi: 16          # residual block
+  sdf_resolution: 64     # resolution of the SDF reconstructed from z_g
+  lambda_recon: 1.0
+  lambda_regime: 0.1
+  lambda_geo: 0.1
+  lambda_decorr: 0.01
+  lr: 0.001
+
+trainer:
+  project: compositional
+  wandb: false           # set true to log to Weights & Biases
+  accelerator: auto
+  devices: 1
+  max_epochs: 200
+  log_every_n_steps: 10
+  seed: 0
+
+callbacks:
+  checkpoint:
+    dirpath: ./checkpoints/compositional
+    filename: cae-{epoch:03d}
+    monitor: val_loss_full
+    mode: min
+    save_top_k: 1

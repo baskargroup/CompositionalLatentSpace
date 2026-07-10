@@ -1,107 +1,81 @@
-# Benchmarking Scientific ML Models for Flow Prediction
+# Compositional Latent Space for Geometry-Dependent Flow Fields
 
-This repository provides the source code and training scripts for **"Geometry Matters: Benchmarking Scientific ML Approaches for Flow Prediction around Complex Geometries."** The project evaluates state-of-the-art **neural operators** and **foundation models** for predicting fluid dynamics over complex geometries.
+Starter implementation of the compositional operator-network framework
+(see `notes/`) on the **FlowBench 2D lid-driven cavity** dataset — steady
+flow with an object inside the cavity.
 
+## What is implemented (simple version — Path A)
 
-## Paper
-Our study introduces a benchmark for scientific machine learning (SciML) models in predicting steady-state flow across intricate geometries using high-fidelity simulation data. The full paper can be accessed here:
+A compositional autoencoder with a block-structured latent
 
-**"Geometry Matters: Benchmarking Scientific ML Approaches for Flow Prediction around Complex Geometries"** 
-- Authors: *Ali Rabeh, Ethan Herron, Aditya Balu, Soumik Sarkar, Chinmay Hegde, Adarsh Krishnamurthy, Baskar Ganapathysubramanian*
-- Preprint: [ArXiv Paper](https://arxiv.org/pdf/2501.01453)
+```
+z = [ z_mu || z_g || z_xi ]
+```
 
-## Features
-- **Benchmarking of 11 SciML models**, including CNO, FNO, DeepONet, WNO, and Poseidon-based architectures.
-- **Evaluation on FlowBench 2D Lid-Driven Cavity dataset**, a publicly available dataset on Hugging Face.
-- **Comparison of two geometric representations**: **Signed Distance Fields (SDF)** and **Binary Masks**.
-- **Hyperparameter tuning with WandB Sweeps**.
-- **Residual and gradient calculations using FEM-based scripts**.
+- **z_mu** — regime block: aligned with log Re through a regression head.
+- **z_g** — geometry block: aligned with the object shape through a small
+  decoder that must reconstruct the SDF from z_g alone.
+- **z_xi** — residual block: free capacity for whatever reconstruction
+  needs beyond (Re, geometry).
 
-## Datasets
-This study utilizes the **FlowBench 2D Lid-Driven Cavity (LDC) dataset**, which is publicly accessible on Hugging Face: [**FlowBench LDC Dataset**](https://huggingface.co/datasets/BGLab/FlowBench/tree/main/LDC_NS_2D/512x512)
+The flow is steady, so there is no dynamics block `z_eta` and no propagator
+(they come later with time-dependent cases).
 
-The dataset is licensed under **CC-BY-NC-4.0** and serves as a benchmark for the development and evaluation of scientific machine learning (SciML) models.
+**Losses** (working notes §15): masked L2 reconstruction over the fluid
+region (L1), regime supervision on `z_mu`, SDF supervision on `z_g`, and a
+Pearson cross-block decorrelation penalty (L6). Weights are set in the config.
 
-### Dataset Structure
-- **Geometry representation:** SDF and Binary Mask
-- **Resolution:** 512×512
-- **Fields:** Velocity (u, v) and Pressure (p)
-- **Stored as:** Numpy tensors (`.npz` format)
+**Diagnostics** (working notes §4): `diagnostics/probes.py` fits
+cross-validated ridge probes from each block to log Re and simple geometry
+descriptors (solid area fraction, centroid). A compositional latent shows
+high R² on the matching block and low R² everywhere else.
 
-### Supported Models
-- **Neural Operators:** `FNO, CNO, WNO, DeepONet, Geometric-DeepONet`
-- **Vision Transformers:** `scOT-T, Poseidon-T, scOT-B, Poseidon-B, scOT-L, Poseidon-L`
+## Layout
 
-## Installation
-To set up the environment and install dependencies for **Neural Operators**:
+```
+main.py                                  # training entry point
+configs/compositional/conf.yaml          # all settings
+data/dataset.py                          # FlowBench LDC dataset wrapper
+models/compositional/networks.py         # encoder / decoder / heads
+models/compositional/compositional_ae.py # LightningModule with the loss stack
+diagnostics/probes.py                    # linear-probe R^2 diagnostic
+notes/                                   # framework PDFs
+```
+
+## Data
+
+FlowBench 2D LDC (NS), 512×512 `.npz` tensors:
+[LDC_NS_2D on Hugging Face](https://huggingface.co/datasets/BGLab/FlowBench/tree/main/LDC_NS_2D/512x512)
+
+- `x`: `[N, (Re, SDF, mask), 512, 512]`
+- `y`: `[N, (u, v, p, c_d, c_l), 512, 512]` (only u, v, p are used)
+
+Set the file paths in `configs/compositional/conf.yaml`.
+
+## Usage
+
 ```bash
-python3 -m venv sciml
-source sciml/bin/activate 
-pip install --upgrade pip setuptools wheel Cython
+python3 -m venv sciml && source sciml/bin/activate
 pip install -r venv_requirements.txt
+
+# train
+python main.py --config configs/compositional/conf.yaml
+
+# diagnose the latent space
+python diagnostics/probes.py --checkpoint checkpoints/compositional/<run>/last.ckpt
 ```
 
-To set up the environment and install dependencies for **Vision Transformers**:
-```bash
-python3 -m venv scot
-source scot/bin/activate
-pip install --upgrade pip setuptools wheel Cython 
-pip install -r scot_requirements.txt
-```
+Training logs go to `./logs` (CSV) by default; set `trainer.wandb: true`
+for Weights & Biases.
 
-## Model Training
-To train a **Neural Operator**, run the following command:
-```bash
-python3 main_sweep.py --model "model_name" --sweep
-```
+## Next steps (per the project plan)
 
-To train a **Vision Transformer**, run the following command:
-```bash
-python3 scot_sweep.py --model "model_name" --sweep
-```
+1. Swap-consistency loss (L12): decode `z_mu` from one sample with `z_g`
+   from another and compare against the true cross-combination.
+2. Group-structured minibatches (§13) for iVAE-style identifiability.
+3. Concept-vector arithmetic diagnostic; INR decoder; HSIC decorrelation.
 
-Before training, you need to specify the dataset paths in the **configurations** (YAML files):
-```yaml
-data:
-  file_path_train_x: ./data/train_x.npz
-  file_path_train_y: ./data/train_y.npz
-  file_path_test_x: ./data/test_x.npz
-  file_path_test_y: ./data/test_y.npz
-```
+## Acknowledgments
 
-## Model Inference
-For model inference, use the scripts in the `plotting_scripts` folder:
-```bash
-python3 process_NO_deriv.py --model "$model" --config "$config_path" --checkpoint "$checkpoint_file"
-```
-Use `process_NO.py` for **neural operators** and `process_scot.py` for **vision transformers**.
-
-## Evaluation & Plotting
-The `plotting_scripts` folder contains Python scripts for:
-- **Evaluating field predictions and errors**.
-- **Calculating residuals using finite element methods (FEM)**.
-- **Computing solution gradients**.
-
-Example usage:
-```bash
-python plotting_scripts/plot_predictions.py --data_path ./data/test.npz --model_name fno
-```
-
-## Citation
-If you use this code, please cite our work:
-```bibtex
-@misc{rabeh2024flowprediction,
-      title={Geometry Matters: Benchmarking Scientific ML Approaches for Flow Prediction around Complex Geometries},
-      author={Ali Rabeh, Ethan Herron, Aditya Balu, Soumik Sarkar, Chinmay Hegde, Adarsh Krishnamurthy, Baskar Ganapathysubramanian},
-      year={2024},
-      eprint={2405.19101},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG}
-}
-```
-
-## Contributing
-We welcome contributions! If you’d like to improve this project, please fork the repository and submit a pull request.
-
-## License
-This repository is licensed under the MIT License.
+Repository template from
+[Geometry Matters (FlowBench benchmark)](https://arxiv.org/pdf/2501.01453).
