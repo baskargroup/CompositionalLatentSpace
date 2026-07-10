@@ -174,4 +174,17 @@ the baseline trains and the probe table looks sane:
         for time-dependent cases.
 \end{itemize}
 
+\newpage
+
+\appendix
+
+\section{Appendix: Running the code on Nova cluster}
+
+
+\begin{itemize}
+    \item STEP1: Login into the Nova cluster ssh username@nova.its.iastate.edu
+    \item STEP2: Activate the virtual environment that contains all the required packages.
+    \item STEP3: Request resource allocation from Nova using salloc -N 1 -n 4 -t 06:00:00 --gres=gpu:a100 --mem 369G 
+\end{itemize}
+
 \end{document}
