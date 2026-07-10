@@ -1,9 +1,9 @@
 data:
-  # FlowBench 2D LDC (NS) .npz files; edit to your local paths
-  file_path_train_x: ./data/all_ldc_train_x.npz
-  file_path_train_y: ./data/all_ldc_train_y.npz
-  file_path_test_x: ./data/all_ldc_test_x.npz
-  file_path_test_y: ./data/all_ldc_test_y.npz
+  # FlowBench 2D LDC (NS) .npz files
+  file_path_train_x: /work/mech-ai/arabeh/data_prep_ns/LDC_NS_2D/processed/easy/all_ldc_train_x.npz
+  file_path_train_y: /work/mech-ai/arabeh/data_prep_ns/LDC_NS_2D/processed/easy/all_ldc_train_y.npz
+  file_path_test_x: /work/mech-ai/arabeh/data_prep_ns/LDC_NS_2D/processed/easy/all_ldc_test_x.npz
+  file_path_test_y: /work/mech-ai/arabeh/data_prep_ns/LDC_NS_2D/processed/easy/all_ldc_test_y.npz
   resolution: 256        # fields are bilinearly resized from 512 to this
   batch_size: 16
   num_workers: 6
