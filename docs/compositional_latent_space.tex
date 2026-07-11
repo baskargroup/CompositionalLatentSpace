@@ -160,6 +160,37 @@ to study (e.g., does removing the decorrelation penalty cause leakage?).
 
 \section{Results}
 
+\subsection{Overview}
+
+Five training runs to date, each changing one ingredient at a time.
+Table~\ref{tab:overview} summarizes the arc: the baseline separates
+blocks by supervision but leaks Re everywhere; sweeping the statistical
+decorrelation weight traces a Pareto trade-off without fixing the
+leakage; the structural losses --- same-factor invariance (L10) and swap
+consistency (L12) --- deliver separation and recombinability
+respectively. Run 5 is the current best configuration. The following
+subsections document each run in chronological detail.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Summary of all runs. ``Leakage'' is the linear-probe $R^2$ of
+  $\log \mathrm{Re}$ from $\boldsymbol{z}_{g}$ (target $\lesssim 0.3$);
+  ``swap ratio'' is the same-Re swap error relative to the reconstruction
+  error (target $\approx 1$).}
+  \label{tab:overview}
+  \begin{tabular}{llccl}
+    \toprule
+    Run & Configuration & Leakage & Swap ratio & Verdict \\
+    \midrule
+    1 & $\lambda_{\mathrm{decorr}} = 0.01$ & 0.900 & 1.06 & Re leaks into all blocks \\
+    2 & $\lambda_{\mathrm{decorr}} = 0.5$  & 0.719 & ---  & trade-off: quality lost, leak remains \\
+    3 & $\lambda_{\mathrm{decorr}} = 0.1$  & 0.865 & ---  & statistical penalty insufficient \\
+    4 & $+$ invariance L10                 & \textbf{0.215} & 1.35 & separated, but brittle \\
+    5 & $+$ swap L12                       & 0.343 & \textbf{1.04} & separated \emph{and} recombinable \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 \subsection{Run 1: baseline loss weights}
 
 First training run on the FlowBench LDC ``easy'' split (2{,}400 train /
@@ -500,20 +531,47 @@ to move a geometry to a new operating point --- and cannot be passed by
 Re-determinism of $\boldsymbol{z}_{\mu}$. Cross-Re ratios for the three
 checkpoints are the next measurement.
 
-\section{Next steps}
+\section{Status and next steps}
 
-Deliberately excluded from this first version and planned as increments once
-the baseline trains and the probe table looks sane:
+\paragraph{Implemented and validated.} The block-structured autoencoder
+with regime and geometry supervision (Runs 1--3); group-structured
+minibatches and the same-factor invariance loss L10 (Run 4); the
+swap-consistency loss L12 (Run 5); and a diagnostic suite comprising
+linear probes, same-Re swap error, and cross-Re swap error --- all
+runnable on stored checkpoints without retraining. The headline
+methodological finding so far: \emph{statistical decorrelation cannot
+functionally separate the blocks at any weight, while the two structural
+losses achieve separation (L10) and recombinability (L12) at essentially
+no cost to reconstruction} --- and the two properties are distinct:
+each requires its own loss, and each is invisible to the other's
+diagnostic.
+
+\paragraph{Planned increments, in order.}
 %
 \begin{itemize}
-  \item swap-consistency loss (L12): decode $\boldsymbol{z}_{\mu}$ from one
-        sample with $\boldsymbol{z}_{g}$ from another and compare against
-        the true cross-combination;
-  \item group-structured minibatches for iVAE-style identifiability;
-  \item concept-vector arithmetic diagnostic;
-  \item INR-style implicit decoder; HSIC (nonlinear) decorrelation;
-  \item dynamics block $\boldsymbol{z}_{\eta}$ and latent propagator $\Phi$
-        for time-dependent cases.
+  \item \textbf{Cross-Re swap measurement} on the Run-1/4/5 checkpoints
+        (in progress). If even Run 5's cross-Re ratio is large, promote
+        cross-Re swapping from diagnostic to training loss (Run 6): the
+        dataset contains the required cross-combinations.
+  \item \textbf{Multi-seed protocol}: rerun the Run-4 and Run-5
+        configurations at 2--3 seeds to put error bars on the probe
+        tables and settle the small differences (e.g.\ leakage
+        $0.215$ vs.\ $0.343$) currently attributed to seed variance.
+  \item \textbf{Concept-vector arithmetic} on $\boldsymbol{z}_{\mu}$ and
+        $\boldsymbol{z}_{g}$ (the AeroJEPA-style sensitivity matrix; a
+        Week-15 success criterion of the project plan).
+  \item \textbf{Residual capacity}: shrink $L_{\xi}$ (e.g.\ $16 \to 4$)
+        --- a steady, deterministic dataset needs little residual
+        capacity, and less room may squeeze out the Re content remaining
+        in $\boldsymbol{z}_{\xi}$ ($R^2 \approx 0.36$).
+  \item \textbf{Loss library extensions}: HSIC (L7) for nonlinear
+        residual dependence; boundary-layer weighted reconstruction (L3).
+  \item \textbf{Architecture}: INR-style implicit decoder for
+        resolution-free queries.
+  \item \textbf{Beyond steady flow}: dynamics block
+        $\boldsymbol{z}_{\eta}$ and latent propagator $\Phi$ for
+        time-dependent cases (the framework's Path B/C), moving toward
+        the warm-up and Case-1 studies of the anchor paper.
 \end{itemize}
 
 \newpage
@@ -522,15 +580,22 @@ the baseline trains and the probe table looks sane:
 
 \section{Appendix: Running the code on Nova cluster}
 
-
-\begin{itemize}
-    \item STEP1: Login into the Nova cluster ssh username@nova.its.iastate.edu
-    \item STEP2: Activate the virtual environment that contains all the required packages.
-    \item STEP3: Request resource allocation from Nova using salloc -N 1 -n 4 -t 01:00:00 --gres=gpu:a100 --mem 369G 
-    \item python main.py --config configs/compositional/conf.yaml
-    \item $python diagnostics/probes.py \
+\begin{enumerate}
+  \item Log in to the Nova cluster:
+        \texttt{ssh username@nova.its.iastate.edu}
+  \item Activate the virtual environment that contains the required
+        packages.
+  \item Request a resource allocation:
+        \texttt{salloc -N 1 -n 4 -t 01:00:00 --gres=gpu:a100 --mem 369G}
+  \item Train:
+        \texttt{python main.py --config configs/compositional/conf.yaml}
+  \item Run the diagnostics on a checkpoint (linear probes and swap
+        errors; \texttt{version\_N} is printed at the end of training):
+        \begin{verbatim}
+python diagnostics/probes.py \
   --config configs/compositional/conf.yaml \
-  --checkpoint checkpoints/compositional/version_2/cae-epoch=189.ckpt$
-\end{itemize}
+  --checkpoint checkpoints/compositional/version_N/last.ckpt
+        \end{verbatim}
+\end{enumerate}
 
 \end{document}
