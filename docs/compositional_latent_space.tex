@@ -673,6 +673,60 @@ $(\boldsymbol{z}_{g}, \boldsymbol{z}_{\xi})$ as Re-free, attacking the
 residual leakage as a side effect. Run 6 adds this term
 ($\lambda_{\mathrm{xswap}} = 0.1$) to the Run-5 configuration.
 
+\subsection{Tracking the residual block: improved, but not fixed}
+
+One thread runs through all the results above and deserves its own
+summary: the Reynolds content of the residual block. Recall that
+$\boldsymbol{z}_{\xi}$ is deliberately unsupervised --- it is free
+storage for whatever the reconstruction needs beyond (Re, shape) --- so
+nothing has ever told it \emph{not} to hold a copy of Re.
+Table~\ref{tab:resid} shows how much Re is readable from it after each
+run (target: near zero).
+
+\begin{table}[htbp]
+  \centering
+  \caption{Reynolds content of the residual block across runs:
+  linear-probe $R^2$ of $\log \mathrm{Re}$ read from
+  $\boldsymbol{z}_{\xi}$. The ideal value is near $0$.}
+  \label{tab:resid}
+  \begin{tabular}{llc}
+    \toprule
+    Run & Losses & $\log \mathrm{Re}$ from $\boldsymbol{z}_{\xi}$ \\
+    \midrule
+    Run 1 & baseline        & 0.777 \\
+    Run 4 & $+$ L10         & 0.412 \\
+    Run 5 & $+$ L10 $+$ L12 & 0.356 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The leakage has dropped by more than half, but $R^2 = 0.356$ still means
+that roughly a third of the Reynolds information sits in a block where it
+does not belong. It is worth noticing that neither L10 nor L12 targets
+$\boldsymbol{z}_{\xi}$ directly; the improvements so far are
+\emph{side effects}. Once L10 forced $\boldsymbol{z}_{g}$ to be Re-free,
+the decoder had to rely more on $\boldsymbol{z}_{\mu}$ for the operating
+point, and the now-less-useful copies elsewhere partly decayed.
+
+Why this matters beyond tidiness: the leftover Re in
+$\boldsymbol{z}_{\xi}$ is our prime suspect for the cross-Re transfer
+failure of Table~\ref{tab:xswap}. In the cross-Re swap, the residual code
+comes from the donor sample at the \emph{wrong} Reynolds number; if the
+decoder reads the operating point from the residual instead of from
+$\boldsymbol{z}_{\mu}$, transfer breaks in exactly the way we observed.
+
+Run 6 is the first run that attacks this directly. Its cross-Re training
+loss decodes $[\boldsymbol{z}_{\mu}^{(i)} \,\|\, \boldsymbol{z}_{g}^{(k)}
+\,\|\, \boldsymbol{z}_{\xi}^{(k)}]$ against ground truth at
+$\mathrm{Re}_i$, so any Re content in $\boldsymbol{z}_{\xi}^{(k)}$
+(which is at the wrong Re) actively increases the loss, and training
+pressure should squeeze it out. When Run 6's probe table arrives, the
+$\log \mathrm{Re}$-from-$\boldsymbol{z}_{\xi}$ cell is one of the two
+numbers to watch, alongside the cross-Re ratio itself. If Run 6 does not
+clean it, two follow-ups are already queued: shrink the residual block
+from 16 to 4 dimensions (less room to hide Re), and the HSIC penalty
+(which catches nonlinear dependence that the Pearson penalty misses).
+
 \section{Status and next steps}
 
 \paragraph{Implemented and validated.} The block-structured autoencoder
