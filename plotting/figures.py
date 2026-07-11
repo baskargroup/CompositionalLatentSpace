@@ -45,6 +45,14 @@ def masked(field, mask):
     return out
 
 
+def robust_vmax(*fields):
+    """99th-percentile amplitude across fields: LDC pressure has sharp spikes
+    at the lid corners, and scaling to the max washes out all interior
+    structure."""
+    values = np.abs(np.concatenate([f[np.isfinite(f)].ravel() for f in fields]))
+    return np.percentile(values, 99.0)
+
+
 def _panel_row(axs, row, images, mask, vmax, err_vmax):
     """Render one channel row: n-1 field panels sharing a symmetric scale,
     plus a final |error| panel. Returns the two image handles for colorbars."""
@@ -81,8 +89,8 @@ def reconstruction_figure(model, dataset, idx, outdir):
     fig, axs = plt.subplots(3, 3, figsize=(9.5, 9))
     for r, ch in enumerate(CHANNELS):
         err = np.abs(pred[r] - truth[r])
-        vmax = np.nanmax(np.abs(masked(truth[r], mask)))
-        err_vmax = np.nanmax(masked(err, mask))
+        vmax = robust_vmax(masked(truth[r], mask))
+        err_vmax = robust_vmax(masked(err, mask))
         im_f, im_e = _panel_row(axs, r, [truth[r], pred[r], err], mask, vmax, err_vmax)
         axs[r, 0].set_ylabel(ch, fontsize=13, rotation=0, labelpad=15, va='center')
         fig.colorbar(im_f, ax=axs[r, :2].tolist(), shrink=0.85, pad=0.02)
@@ -141,9 +149,8 @@ def transfer_figure(model, dataset, outdir):
     fig, axs = plt.subplots(3, 4, figsize=(12.5, 9))
     for r, ch in enumerate(CHANNELS):
         err = np.abs(pred[r] - truth[r])
-        vmax = max(np.nanmax(np.abs(masked(truth[r], mask))),
-                   np.nanmax(np.abs(masked(donor[r], mask))))
-        err_vmax = np.nanmax(masked(err, mask))
+        vmax = robust_vmax(masked(truth[r], mask), masked(donor[r], mask))
+        err_vmax = robust_vmax(masked(err, mask))
         im_f, im_e = _panel_row(axs, r, [donor[r], pred[r], truth[r], err],
                                 mask, vmax, err_vmax)
         axs[r, 0].set_ylabel(ch, fontsize=13, rotation=0, labelpad=15, va='center')

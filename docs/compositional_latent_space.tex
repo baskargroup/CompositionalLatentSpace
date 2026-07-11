@@ -323,6 +323,18 @@ next run.
   \end{tabular}
 \end{table}
 
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.92\textwidth]{figures/reconstruction_509.pdf}
+  \caption{What reconstruction looks like: a test sample from the final
+  model (Run 7). Rows are the three field channels $(u, v, p)$; columns
+  are the CFD truth, the model's reconstruction from the 52-number
+  latent, and the absolute error (note the error color scale is roughly
+  ten times finer than the field scale). The solid object is shown in
+  gray. Errors concentrate in thin layers at the object surface.}
+  \label{fig:recon}
+\end{figure}
+
 \subsection{Run 1: baseline loss weights}
 
 First training run on the FlowBench LDC ``easy'' split (2{,}400 training
@@ -1049,6 +1061,22 @@ and disappear when geometry is read from the SDF instead. (For this
 architecture the geometry rows of the concept matrix are identically
 zero by construction --- the re-encode step pins $\boldsymbol{z}_{g}$ to
 the supplied SDF --- so only the Re row is diagnostic.)
+Figure~\ref{fig:transfer} shows the transfer result as fields.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/transfer.pdf}
+  \caption{Cross-Re transfer, visualized (Run 7 model). The model has
+  encoded this geometry only at $\mathrm{Re} = 12$ (left column: the
+  slow, diffuse, viscous-regime flow). Swapping in a regime code taken
+  from a different sample at $\mathrm{Re} = 917$ and decoding produces
+  the second column --- which develops the thin lid shear layer and the
+  strong downwelling jet along the right wall, matching the CFD truth at
+  $\mathrm{Re} = 917$ (third column) to within errors an order of
+  magnitude smaller than the fields (fourth column). The regime code
+  alone moved this geometry across two decades of Reynolds number.}
+  \label{fig:transfer}
+\end{figure}
 
 \paragraph{The one prediction that failed --- instructively.} The
 residual's Re content did not shrink; it \emph{grew}, from $0.243$ to
