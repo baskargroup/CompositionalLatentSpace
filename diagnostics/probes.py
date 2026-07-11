@@ -46,6 +46,46 @@ def probe_r2(z_block, target, n_folds=5, alpha=1.0):
                            cv=n_folds, scoring='r2').mean()
 
 
+@torch.no_grad()
+def swap_error(model, dataset, max_pairs=256, batch_size=16, seed=0):
+    """
+    Swap-consistency error (the metric L12 trains): for test pairs (i, k) at
+    the same Re but different geometry, decode [z_mu(i) || z_g(k) || z_xi(k)]
+    and compare against sample k's true field. Reported alongside the ordinary
+    reconstruction error on the same samples; a ratio near 1 means the blocks
+    are functionally recombinable through the decoder.
+
+    Returns (mean_swap_error, mean_recon_error, n_pairs), or None if the
+    dataset contains no same-Re/different-geometry pairs.
+    """
+    re, gid = dataset.re, dataset.geo_ids
+    same_re = re.view(-1, 1) == re.view(1, -1)
+    diff_geo = gid.view(-1, 1) != gid.view(1, -1)
+    idx_i, idx_k = torch.nonzero(same_re & diff_geo, as_tuple=True)
+    if idx_i.numel() == 0:
+        return None
+    gen = torch.Generator().manual_seed(seed)
+    keep = torch.randperm(idx_i.numel(), generator=gen)[:max_pairs]
+    idx_i, idx_k = idx_i[keep], idx_k[keep]
+
+    swap_sum, recon_sum, n = 0.0, 0.0, 0
+    for b in range(0, idx_i.numel(), batch_size):
+        bi, bk = idx_i[b:b + batch_size], idx_k[b:b + batch_size]
+        fields_i, fields_k = dataset.fields[bi], dataset.fields[bk]
+        mask_k = dataset.mask[bk]
+        z_mu_i, _, _ = model.encode(fields_i)
+        z_mu_k, z_g_k, z_xi_k = model.encode(fields_k)
+
+        recon_swap = model.decoder(torch.cat([z_mu_i, z_g_k, z_xi_k], dim=1))
+        recon_self = model.decoder(torch.cat([z_mu_k, z_g_k, z_xi_k], dim=1))
+
+        m = len(bi)
+        swap_sum += model.masked_recon_loss(recon_swap, fields_k, mask_k).item() * m
+        recon_sum += model.masked_recon_loss(recon_self, fields_k, mask_k).item() * m
+        n += m
+    return swap_sum / n, recon_sum / n, n
+
+
 def main(config_path, checkpoint_path, split='test'):
     config = OmegaConf.load(config_path)
 
@@ -89,6 +129,16 @@ def main(config_path, checkpoint_path, split='test'):
 
     print('\nExpected pattern: log_re high from z_mu only; '
           'geometry targets high from z_g only.')
+
+    result = swap_error(model, dataset)
+    if result is None:
+        print('\nSwap error: no same-Re/different-geometry pairs in this split.')
+    else:
+        swap_mse, recon_mse, n_pairs = result
+        print(f'\nSwap-consistency error ({n_pairs} pairs): '
+              f'swap={swap_mse:.3e}  recon={recon_mse:.3e}  '
+              f'ratio={swap_mse / max(recon_mse, 1e-12):.2f}')
+        print('(ratio near 1 = blocks recombine cleanly through the decoder)')
 
     out_dir = os.path.dirname(checkpoint_path) or '.'
     out_path = os.path.join(out_dir, f'probe_r2_{split}.csv')
