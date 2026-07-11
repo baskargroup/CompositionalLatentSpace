@@ -2,7 +2,8 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 
-from models.compositional.networks import FieldEncoder, FieldDecoder, RegimeHead, SDFHead
+from models.compositional.networks import (FieldEncoder, FieldDecoder,
+                                           RegimeHead, SDFHead, SDFEncoder)
 
 
 def same_factor_invariance(z, group_ids):
@@ -50,25 +51,36 @@ class CompositionalAE(pl.LightningModule):
 
     def __init__(self, in_channels=3, resolution=256, base_channels=32,
                  latent_mu=4, latent_g=32, latent_xi=16, sdf_resolution=64,
-                 lambda_recon=1.0, lambda_regime=0.1, lambda_geo=0.1,
-                 lambda_decorr=0.01, lambda_inv=0.0, lambda_swap=0.0,
-                 lambda_xswap=0.0, lr=1e-3):
+                 static_geometry=False, lambda_recon=1.0, lambda_regime=0.1,
+                 lambda_geo=0.1, lambda_decorr=0.01, lambda_inv=0.0,
+                 lambda_swap=0.0, lambda_xswap=0.0, lr=1e-3):
         super().__init__()
         self.save_hyperparameters()
 
         latent_dim = latent_mu + latent_g + latent_xi
-        self.encoder = FieldEncoder(in_channels, resolution, base_channels,
-                                    latent_mu, latent_g, latent_xi)
+        if static_geometry:
+            # z_g comes from a dedicated SDF encoder (Re-invariant by
+            # construction); the field encoder produces only z_mu and z_xi
+            self.encoder = FieldEncoder(in_channels, resolution, base_channels,
+                                        latent_mu, 0, latent_xi)
+            self.geom_encoder = SDFEncoder(resolution, base_channels, latent_g)
+        else:
+            self.encoder = FieldEncoder(in_channels, resolution, base_channels,
+                                        latent_mu, latent_g, latent_xi)
         self.decoder = FieldDecoder(latent_dim, in_channels, resolution, base_channels)
         self.regime_head = RegimeHead(latent_mu)
         self.sdf_head = SDFHead(latent_g, sdf_resolution, base_channels)
 
-    def encode(self, fields):
+    def encode(self, fields, sdf=None):
         z_mu, z_g, z_xi = self.encoder(fields)
+        if self.hparams.static_geometry:
+            if sdf is None:
+                raise ValueError('static_geometry model needs the sdf to encode')
+            z_g = self.geom_encoder(sdf)
         return z_mu, z_g, z_xi
 
-    def forward(self, fields):
-        z_mu, z_g, z_xi = self.encode(fields)
+    def forward(self, fields, sdf=None):
+        z_mu, z_g, z_xi = self.encode(fields, sdf)
         recon = self.decoder(torch.cat([z_mu, z_g, z_xi], dim=1))
         return recon, (z_mu, z_g, z_xi)
 
@@ -138,7 +150,7 @@ class CompositionalAE(pl.LightningModule):
 
     def _losses(self, batch):
         fields, mask = batch['fields'], batch['mask']
-        recon, (z_mu, z_g, z_xi) = self(fields)
+        recon, (z_mu, z_g, z_xi) = self(fields, batch['sdf'])
 
         loss_recon = self.masked_recon_loss(recon, fields, mask)
         loss_regime = F.mse_loss(self.regime_head(z_mu), batch['log_re'])
@@ -190,7 +202,7 @@ class CompositionalAE(pl.LightningModule):
             self.log(f'val_loss_{name}', value)
 
         # per-channel reconstruction errors, as in the FlowBench template
-        recon, _ = self(batch['fields'])
+        recon, _ = self(batch['fields'], batch['sdf'])
         full, per = self.masked_recon_loss(recon, batch['fields'], batch['mask'],
                                            per_channel=True)
         self.log('val_loss_full', full, on_epoch=True)

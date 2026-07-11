@@ -34,12 +34,40 @@ class FieldEncoder(nn.Module):
 
         feat_dim = channels[-1] * 4 * 4
         self.head_mu = nn.Linear(feat_dim, latent_mu)
-        self.head_g = nn.Linear(feat_dim, latent_g)
+        # latent_g = 0 means the geometry block comes from a separate static
+        # encoder (SDFEncoder) instead of the flow field
+        self.head_g = nn.Linear(feat_dim, latent_g) if latent_g > 0 else None
         self.head_xi = nn.Linear(feat_dim, latent_xi)
 
     def forward(self, fields):
         h = self.pool(self.conv(fields)).flatten(1)
-        return self.head_mu(h), self.head_g(h), self.head_xi(h)
+        z_g = self.head_g(h) if self.head_g is not None else None
+        return self.head_mu(h), z_g, self.head_xi(h)
+
+
+class SDFEncoder(nn.Module):
+    """
+    Static geometry encoder E_g: SDF -> z_g. Because the SDF does not depend
+    on the operating condition, z_g is Reynolds-invariant by construction.
+    """
+
+    def __init__(self, resolution=256, base_channels=32, latent_g=32,
+                 max_channels=256):
+        super().__init__()
+        n_down = int(math.log2(resolution // 8))
+        channels = [min(base_channels * 2 ** i, max_channels) for i in range(n_down)]
+
+        layers = [conv_block(1, channels[0])]
+        for i in range(n_down):
+            out_ch = channels[min(i + 1, n_down - 1)]
+            layers.append(conv_block(channels[i], out_ch, stride=2))
+            channels[min(i + 1, n_down - 1)] = out_ch
+        self.conv = nn.Sequential(*layers)
+        self.pool = nn.AdaptiveAvgPool2d(4)
+        self.fc = nn.Linear(channels[-1] * 4 * 4, latent_g)
+
+    def forward(self, sdf):
+        return self.fc(self.pool(self.conv(sdf)).flatten(1))
 
 
 class FieldDecoder(nn.Module):

@@ -33,7 +33,8 @@ def encode_dataset(model, dataset, batch_size=16, device='cpu'):
     loader = data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     blocks = {'z_mu': [], 'z_g': [], 'z_xi': []}
     for batch in loader:
-        z_mu, z_g, z_xi = model.encode(batch['fields'].to(device))
+        z_mu, z_g, z_xi = model.encode(batch['fields'].to(device),
+                                       batch['sdf'].to(device))
         blocks['z_mu'].append(z_mu.cpu())
         blocks['z_g'].append(z_g.cpu())
         blocks['z_xi'].append(z_xi.cpu())
@@ -109,9 +110,9 @@ def _paired_decode_error(model, dataset, idx_i, idx_k, idx_m, batch_size):
     swap_sum, recon_sum, donor_sum, n = 0.0, 0.0, 0.0, 0
     for b in range(0, idx_i.numel(), batch_size):
         bi, bk, bm = idx_i[b:b + batch_size], idx_k[b:b + batch_size], idx_m[b:b + batch_size]
-        z_mu_i, _, _ = model.encode(dataset.fields[bi])
-        _, z_g_k, z_xi_k = model.encode(dataset.fields[bk])
-        z_mu_m, z_g_m, z_xi_m = model.encode(dataset.fields[bm])
+        z_mu_i, _, _ = model.encode(dataset.fields[bi], dataset.sdf[bi])
+        _, z_g_k, z_xi_k = model.encode(dataset.fields[bk], dataset.sdf[bk])
+        z_mu_m, z_g_m, z_xi_m = model.encode(dataset.fields[bm], dataset.sdf[bm])
         fields_m, mask_m = dataset.fields[bm], dataset.mask[bm]
 
         recon_swap = model.decoder(torch.cat([z_mu_i, z_g_k, z_xi_k], dim=1))

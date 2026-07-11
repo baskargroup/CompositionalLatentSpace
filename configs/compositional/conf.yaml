@@ -15,6 +15,7 @@ model:
   latent_g: 32           # geometry block (object shape lives here)
   latent_xi: 16          # residual block
   sdf_resolution: 64     # resolution of the SDF reconstructed from z_g
+  static_geometry: false # true: z_g from a dedicated SDF encoder (Re-invariant by construction)
   lambda_recon: 1.0
   lambda_regime: 0.1
   lambda_geo: 0.1

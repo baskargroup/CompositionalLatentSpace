@@ -35,12 +35,15 @@ from models.compositional.compositional_ae import CompositionalAE
 
 
 @torch.no_grad()
-def decode_reencode(model, z, batch_size=16):
-    """Decode latents to fields, re-encode the fields, return new latents."""
+def decode_reencode(model, z, sdf, batch_size=16):
+    """Decode latents to fields, re-encode the fields, return new latents.
+    `sdf` is the base samples' SDF, needed by static-geometry models (note:
+    for such models geometry walks are pinned by the supplied SDF, so this
+    diagnostic is most meaningful for flow-encoded geometry models)."""
     out = []
     for b in range(0, z.shape[0], batch_size):
         fields = model.decoder(z[b:b + batch_size])
-        z_mu, z_g, z_xi = model.encode(fields)
+        z_mu, z_g, z_xi = model.encode(fields, sdf[b:b + batch_size])
         out.append(torch.cat([z_mu, z_g, z_xi], dim=1))
     return torch.cat(out)
 
@@ -113,9 +116,10 @@ def main(config_path, checkpoint_path, n_samples=64, step=1.0, seed=0,
     rng = np.random.default_rng(seed)
     idx = rng.choice(Z.shape[0], size=min(n_samples, Z.shape[0]), replace=False)
     z_base = torch.tensor(Z[idx], dtype=torch.float32)
+    sdf_base = dataset.sdf[torch.tensor(idx)]
 
     # baseline readout after one decode/re-encode pass (cancels autoencoding bias)
-    z_cycle = decode_reencode(model, z_base).numpy()
+    z_cycle = decode_reencode(model, z_base, sdf_base).numpy()
     base_pred = {k: predict(k, z_cycle) for k in names}
 
     S = np.zeros((len(names), len(names)))
@@ -123,7 +127,7 @@ def main(config_path, checkpoint_path, n_samples=64, step=1.0, seed=0,
         # step size chosen so the probe's own prediction moves by `step` sigma
         alpha = step / np.linalg.norm(coefs[k])
         z_walk = z_base + torch.tensor(directions[k], dtype=torch.float32) * alpha
-        z_walk_cycle = decode_reencode(model, z_walk).numpy()
+        z_walk_cycle = decode_reencode(model, z_walk, sdf_base).numpy()
         for b, j in enumerate(names):
             S[a, b] = (predict(j, z_walk_cycle) - base_pred[j]).mean() / step
 
