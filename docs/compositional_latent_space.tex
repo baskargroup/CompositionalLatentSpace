@@ -860,6 +860,93 @@ every Run-6 seed the relationship is reversed (donor $\approx 0.58$,
 target $\approx 0.003$): the decoder follows $\boldsymbol{z}_{\mu}$,
 exactly as designed.
 
+\subsection{Concept-vector arithmetic: the latent as a control panel}
+
+The last diagnostic from the project plan asks whether the latent can be
+used as a \emph{control panel}: pick a parameter, move the latent along
+that parameter's direction, and check that only that parameter responds
+in the decoded flow. Concretely: fit one ridge probe per parameter and
+take its weight direction as the parameter's \emph{concept vector}; walk
+test latents one standard deviation along a concept vector; decode the
+walked latent to a flow field; re-encode that field; and read out all
+four parameters with the same probes. The result is a sensitivity matrix
+$S[k, j]$ = (response of parameter $j$, in standard deviations, when
+walking parameter $k$'s direction). A perfectly compositional and
+editable latent gives diagonal entries near $1$ and off-diagonal entries
+near $0$; the plan's criteria are diagonal $\ge 0.9$, off-diagonal
+$\le 0.3$. Note that the walk passes through decode $\to$ re-encode, so
+the diagonal is bounded by how faithfully the autoencoder round-trips a
+perturbed latent. Table~\ref{tab:concept} reports the Run-6 matrix in
+two variants, explained below.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Concept-vector sensitivity matrices for Run 6 (64 base
+  samples, $1\sigma$ steps, decode $\to$ re-encode $\to$ probe). Rows:
+  direction walked; columns: parameter that responded. Left: probes
+  fitted on the full latent. Right: block-restricted probes (the regime
+  probe sees only $\boldsymbol{z}_{\mu}$, geometry probes only
+  $\boldsymbol{z}_{g}$), so a walk cannot touch the wrong block by
+  construction.}
+  \label{tab:concept}
+  \begin{tabular}{lcccc|cccc}
+    \toprule
+    & \multicolumn{4}{c|}{Full-latent probes}
+    & \multicolumn{4}{c}{Block-restricted probes} \\
+    Walk $\backslash$ read & Re & area & c$_x$ & c$_y$
+                           & Re & area & c$_x$ & c$_y$ \\
+    \midrule
+    $\log \mathrm{Re}$ & \textbf{0.39} & 0.48 & $-0.47$ & $-0.19$
+                       & \textbf{0.48} & $-0.03$ & $-0.37$ & 0.49 \\
+    Area fraction      & 0.02 & \textbf{0.42} & $-0.08$ & $-0.10$
+                       & 0.01 & \textbf{0.38} & $-0.07$ & $-0.05$ \\
+    Centroid $x$       & $-0.02$ & $-0.10$ & \textbf{0.50} & 0.08
+                       & $-0.01$ & $-0.11$ & \textbf{0.47} & 0.07 \\
+    Centroid $y$       & $-0.00$ & $-0.03$ & 0.05 & \textbf{0.47}
+                       & $-0.00$ & 0.00 & 0.01 & \textbf{0.43} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Geometry directions are working edit handles.} In every
+geometry row the intended descriptor responds ($0.38$--$0.50$) and
+nothing else does (cross-talk $\le 0.11$, well inside the $0.3$
+criterion). The baseline model fails this completely: Run 1's geometry
+diagonals are only $0.08$--$0.16$ --- its entangled latent simply does
+not respond to probe-direction edits. The structural losses turned the
+geometry block into a usable set of knobs, with responses $3$--$6\times$
+stronger than the baseline's.
+
+\paragraph{The diagonals sit near $0.4$--$0.5$, not $0.9$.} This is
+mostly the decode $\to$ re-encode cycle: an autoencoder pulls perturbed
+latents back toward the data manifold, attenuating any walk. The
+attenuation affects all rows equally, so the \emph{relative} pattern ---
+which parameters respond --- remains meaningful; but the plan's
+$\ge 0.9$ criterion is not met in this strict round-trip form.
+
+\paragraph{The $\log \mathrm{Re}$ row splits into artifact and finding.}
+With full-latent probes, walking the Re direction appears to change the
+geometry readouts strongly ($+0.48$ area, $-0.47$ centroid~$x$). The
+block-restricted variant separates two causes. The area cross-talk
+collapses ($0.48 \to -0.03$): it was an \emph{artifact} --- because Re
+is still partly readable from $\boldsymbol{z}_{g}$ ($R^2 \approx 0.38$),
+the full-latent Re probe direction had components inside the geometry
+block, and walking it dragged $\boldsymbol{z}_{g}$ along mechanically.
+The centroid cross-talk, however, \emph{survives} the restriction
+($-0.37$, $+0.49$) even though the walk now touches only
+$\boldsymbol{z}_{\mu}$. The chain must therefore run through the fields
+themselves: a new regime code makes the decoder produce the flow at a
+different Re, and the \emph{encoder's} geometry readout shifts in
+response. This is physically sensible --- the encoder can only infer the
+object's position from its imprint on the flow, and Re-dependent flow
+structures (recirculation zones, wake position) move with Re and
+partially masquerade as object position. The same mechanism is a strong
+candidate explanation for the residual $\sim 0.3$ leakage in the probe
+tables: it may not be a failure of the losses at all, but a property of
+inferring geometry from flow appearance. Testing that hypothesis --- for
+example by feeding the encoder the SDF alongside the flow, or by adding
+an encoder-side invariance term --- is a natural next experiment.
+
 \section{Status and next steps}
 
 \paragraph{Implemented and validated.} The block-structured autoencoder
@@ -880,18 +967,25 @@ it) at essentially no cost to reconstruction}. The three properties are
 genuinely distinct: each required its own loss, and each is invisible to
 the other properties' diagnostics.
 
+Concept-vector arithmetic (Table~\ref{tab:concept}) is also complete:
+the geometry directions act as clean edit handles (cross-talk
+$\le 0.11$), and the block-restricted variant traced the remaining
+Re-to-geometry cross-talk to the encoder inferring object position from
+Re-dependent flow structures --- a candidate explanation for the
+residual $\sim 0.3$ probe leakage.
+
 \paragraph{Planned increments, in order.}
 %
 \begin{itemize}
-  \item \textbf{Concept-vector arithmetic} on $\boldsymbol{z}_{\mu}$ and
-        $\boldsymbol{z}_{g}$: walk the latent along the direction
-        associated with one parameter and check that only that parameter
-        responds (the AeroJEPA-style sensitivity matrix; a Week-15
-        success criterion of the project plan).
+  \item \textbf{Encoder-side invariance test}: feed the encoder the SDF
+        alongside the flow (or add an encoder invariance term) to test
+        whether the remaining Re-to-geometry cross-talk and the
+        $\sim 0.3$ probe leakage share the flow-appearance mechanism
+        identified by the concept-vector diagnostic.
   \item \textbf{Residual capacity}: shrink the residual block (e.g.\
         $16 \to 4$ dimensions) --- a steady, deterministic dataset needs
         little residual capacity, and less room may squeeze out the Re
-        content remaining in $\boldsymbol{z}_{\xi}$ ($R^2 \approx 0.36$).
+        content remaining in $\boldsymbol{z}_{\xi}$ ($R^2 \approx 0.2$).
   \item \textbf{Loss library extensions}: HSIC (L7), which detects
         nonlinear dependence between blocks, not just linear correlation;
         boundary-layer weighted reconstruction (L3), which weights errors
