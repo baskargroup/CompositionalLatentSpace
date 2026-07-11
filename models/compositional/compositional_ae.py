@@ -51,9 +51,9 @@ class CompositionalAE(pl.LightningModule):
 
     def __init__(self, in_channels=3, resolution=256, base_channels=32,
                  latent_mu=4, latent_g=32, latent_xi=16, sdf_resolution=64,
-                 static_geometry=False, lambda_recon=1.0, lambda_regime=0.1,
-                 lambda_geo=0.1, lambda_decorr=0.01, lambda_inv=0.0,
-                 lambda_swap=0.0, lambda_xswap=0.0, lr=1e-3):
+                 static_geometry=False, lambda_recon=1.0, lambda_bl=0.0,
+                 lambda_regime=0.1, lambda_geo=0.1, lambda_decorr=0.01,
+                 lambda_inv=0.0, lambda_swap=0.0, lambda_xswap=0.0, lr=1e-3):
         super().__init__()
         self.save_hyperparameters()
 
@@ -94,6 +94,18 @@ class CompositionalAE(pl.LightningModule):
             return full
         per = [(se[:, i].sum(dim=(1, 2)) / node_count).mean() for i in range(se.shape[1])]
         return full, per
+
+    def boundary_recon_loss(self, recon, fields, mask, sdf):
+        """Boundary-layer weighted reconstruction (loss L3 of the working
+        notes): the same masked MSE, restricted to the near-object band
+        0 <= SDF <= 0.2 — the region the benchmark's M2 score measures.
+        Normalizing by the band's own pixel count (not the fluid count) is
+        what gives these thin-band pixels real weight: the band is only a few
+        percent of the fluid, so under L1 alone its errors are diluted away."""
+        band = mask * ((sdf >= 0) & (sdf <= 0.2)).float()
+        se = ((recon * mask - fields) ** 2 * band).sum(dim=(1, 2, 3))
+        count = band.sum(dim=(1, 2, 3)).clamp(min=1.0)
+        return (se / count).mean()
 
     def swap_consistency(self, z_mu, z_g, z_xi, batch):
         """Swap consistency (loss L12 of the working notes): for in-batch pairs
@@ -155,6 +167,12 @@ class CompositionalAE(pl.LightningModule):
         loss_recon = self.masked_recon_loss(recon, fields, mask)
         loss_regime = F.mse_loss(self.regime_head(z_mu), batch['log_re'])
 
+        # L3: extra reconstruction pressure on the boundary-layer band
+        if self.hparams.lambda_bl > 0:
+            loss_bl = self.boundary_recon_loss(recon, fields, mask, batch['sdf'])
+        else:
+            loss_bl = loss_recon.new_zeros(())
+
         sdf_lr = F.interpolate(batch['sdf'], size=self.sdf_head.resolution,
                                mode='bilinear', align_corners=False)
         loss_geo = F.mse_loss(self.sdf_head(z_g), sdf_lr)
@@ -179,11 +197,13 @@ class CompositionalAE(pl.LightningModule):
         else:
             loss_xswap, n_triples = loss_recon.new_zeros(()), 0
 
-        total = (h.lambda_recon * loss_recon + h.lambda_regime * loss_regime
+        total = (h.lambda_recon * loss_recon + h.lambda_bl * loss_bl
+                 + h.lambda_regime * loss_regime
                  + h.lambda_geo * loss_geo + h.lambda_decorr * loss_decorr
                  + h.lambda_inv * loss_inv + h.lambda_swap * loss_swap
                  + h.lambda_xswap * loss_xswap)
-        return total, {'recon': loss_recon, 'regime': loss_regime,
+        return total, {'recon': loss_recon, 'bl': loss_bl,
+                       'regime': loss_regime,
                        'geo': loss_geo, 'decorr': loss_decorr, 'inv': loss_inv,
                        'swap': loss_swap, 'swap_pairs': float(n_pairs),
                        'xswap': loss_xswap, 'xswap_triples': float(n_triples)}
