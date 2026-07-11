@@ -15,14 +15,26 @@
 
 \section{Introduction}
 
-We train a \emph{compositional autoencoder} (Path~A of the compositional
-operator-network framework) on the FlowBench 2D lid-driven cavity dataset:
-steady Navier--Stokes flow with an object placed inside the cavity. The
-autoencoder compresses each steady flow field into a small latent vector
-$\boldsymbol{z}$ and reconstructs the field from it --- a nonlinear analogue
-of POD. The key structural choice is that $\boldsymbol{z}$ is not one opaque
-vector; it is partitioned by architecture into three named blocks, each
-intended to carry one physical factor:
+This project asks a simple question: when a neural network compresses a
+flow field into a short list of numbers, can we make those numbers
+\emph{mean} something physical?
+
+The tool we use is an \emph{autoencoder}: a pair of networks in which an
+\emph{encoder} squeezes a full flow field (hundreds of thousands of grid
+values) down to a short vector $\boldsymbol{z}$, and a \emph{decoder}
+rebuilds the field from that vector alone. The short vector is called the
+\emph{latent vector}, and the space it lives in is the \emph{latent
+space}. Readers who know proper orthogonal decomposition (POD) can think
+of an autoencoder as a nonlinear POD: instead of modal amplitudes, the
+network learns its own compressed coordinates. We train on the FlowBench
+2D lid-driven cavity dataset: steady Navier--Stokes flow in a square
+cavity whose top lid moves at constant speed, with a solid object placed
+inside the cavity.
+
+Ordinarily the latent vector is a black box: the network stores
+information wherever it likes, and no single entry means anything. Our
+key structural choice is to split $\boldsymbol{z}$, by architecture, into
+three named blocks, each intended to carry exactly one physical factor:
 %
 \begin{equation}
   \boldsymbol{z} \;=\;
@@ -34,105 +46,163 @@ intended to carry one physical factor:
   \;\in\; \mathbb{R}^{52}.
 \end{equation}
 %
+In words: 52 numbers summarize each flow field. The first 4
+($\boldsymbol{z}_{\mu}$, the \emph{regime} block) should describe the
+operating condition --- here, the Reynolds number Re. The next 32
+($\boldsymbol{z}_{g}$, the \emph{geometry} block) should describe the
+shape of the object in the cavity. The last 16 ($\boldsymbol{z}_{\xi}$,
+the \emph{residual} block) are free capacity for whatever else the
+reconstruction needs.
+
 The hypothesis under test: after training, $\boldsymbol{z}_{\mu}$ should
-contain the Reynolds number, $\boldsymbol{z}_{g}$ should contain the object
-shape, and neither should leak into the other. Because the flow is steady,
-there is no dynamics block $\boldsymbol{z}_{\eta}$ and no latent propagator
-$\Phi$ in this first version; those enter later with time-dependent cases.
+contain the Reynolds number, $\boldsymbol{z}_{g}$ should contain the
+object shape, and neither should \emph{leak} into the other --- that is,
+you should not be able to recover Re by reading the geometry block.
+Because the flow here is steady (it does not change in time), there is no
+dynamics block $\boldsymbol{z}_{\eta}$ and no latent time-stepper $\Phi$
+in this first version; those enter later with time-dependent cases.
 
 \section{Dataset}
 
-Each FlowBench sample is a steady lid-driven cavity solution at
-$512 \times 512$ resolution. The data loader
+This section describes what one training sample looks like and which
+labels we extract from it. Each FlowBench sample is a steady lid-driven
+cavity solution stored on a $512 \times 512$ grid. The data loader
 (\texttt{data/dataset.py}) unpacks the raw \texttt{.npz} arrays into:
 %
 \begin{itemize}
-  \item \textbf{fields} --- the $(u, v, p)$ solution, resized
-        $512^2 \to 256^2$ to keep training cheap;
-  \item \textbf{sdf} --- the signed distance field of the object
-        (the geometry label);
-  \item \textbf{mask} --- binary fluid mask ($1$ in fluid, $0$ in the solid);
-  \item \textbf{log\_re} --- the regime label. Re is stored as a constant
-        channel, so a single pixel is extracted, transformed to
-        $\log_{10}\mathrm{Re}$ (Re spans orders of magnitude), and
-        standardized with \emph{train-set} statistics; the test set reuses
-        those statistics so both splits share one scale.
+  \item \textbf{fields} --- the solution itself: horizontal velocity $u$,
+        vertical velocity $v$, and pressure $p$ at every grid point.
+        We resize $512^2 \to 256^2$ to make training cheaper; this loses
+        little information for these smooth steady fields.
+  \item \textbf{sdf} --- the signed distance field of the object: at
+        every grid point, the distance to the object's surface, with a
+        positive sign in the fluid and a negative sign inside the solid.
+        The SDF is a convenient, smooth description of the shape, and it
+        serves as our geometry label.
+  \item \textbf{mask} --- a binary image: $1$ where there is fluid, $0$
+        inside the solid object.
+  \item \textbf{log\_re} --- the regime label. Re is stored in the file
+        as a constant image, so we read a single pixel to get the number.
+        We use $\log_{10}\mathrm{Re}$ rather than Re because Re spans
+        orders of magnitude, and we \emph{standardize} it (subtract the
+        mean, divide by the standard deviation) so the network sees
+        values of order one. The mean and standard deviation are computed
+        on the \emph{training} set only, and the test set reuses them, so
+        both splits are measured on exactly the same scale.
 \end{itemize}
 %
-The loader also computes three cheap per-sample geometry summaries from the
-mask (solid area fraction, centroid $x$, centroid $y$). These are never used
-during training; they serve only as ground-truth targets for the linear-probe
-diagnostic of Section~\ref{sec:diagnostics}.
+The loader also computes three simple geometry summaries from the mask:
+the fraction of the cavity occupied by the solid (area fraction) and the
+$x$ and $y$ coordinates of the solid's center (centroid). These three
+numbers are never used during training. They exist only as ground-truth
+targets for the diagnostic of Section~\ref{sec:diagnostics}: if the
+geometry block truly contains the shape, simple shape summaries should be
+readable from it.
 
 \section{Network architecture}
 
-Four modules (\texttt{models/compositional/networks.py}):
+Four modules make up the model
+(\texttt{models/compositional/networks.py}):
 %
 \begin{itemize}
-  \item \textbf{FieldEncoder} $\mathcal{E}$ --- a CNN that halves the spatial
-        resolution repeatedly ($256 \to 8$), pools, and terminates in
-        \emph{three separate linear heads} producing
-        $\boldsymbol{z}_{\mu}, \boldsymbol{z}_{g}, \boldsymbol{z}_{\xi}$.
-        The blocks are architecturally separate from the start.
-  \item \textbf{FieldDecoder} $\mathcal{D}$ --- the mirror image: the
-        concatenated $\boldsymbol{z}$ is reshaped to an $8\times 8$ feature
-        map and upsampled back to a $256^2$ $(u, v, p)$ field.
-  \item \textbf{RegimeHead} --- a small MLP that reads
+  \item \textbf{FieldEncoder} $\mathcal{E}$ --- a convolutional neural
+        network (CNN): a stack of learned filters that repeatedly halves
+        the image resolution ($256 \to 128 \to \dots \to 8$), so that
+        each stage sees increasingly large-scale features of the flow.
+        After the final stage the features are pooled and passed through
+        \emph{three separate linear layers} (``heads''), one producing
+        $\boldsymbol{z}_{\mu}$, one $\boldsymbol{z}_{g}$, and one
+        $\boldsymbol{z}_{\xi}$. The blocks are therefore separate objects
+        from the very start.
+  \item \textbf{FieldDecoder} $\mathcal{D}$ --- the mirror image of the
+        encoder: the full vector $\boldsymbol{z}$ is reshaped into a
+        small $8 \times 8$ feature map and repeatedly upsampled back to a
+        $256^2$ $(u, v, p)$ field.
+  \item \textbf{RegimeHead} --- a small network that is shown
         $\boldsymbol{z}_{\mu}$ \emph{only} and must predict
         $\log \mathrm{Re}$.
-  \item \textbf{SDFHead} --- a small decoder that reads $\boldsymbol{z}_{g}$
-        \emph{only} and must redraw the object's SDF at $64 \times 64$.
+  \item \textbf{SDFHead} --- a small decoder that is shown
+        $\boldsymbol{z}_{g}$ \emph{only} and must redraw the object's SDF
+        at $64 \times 64$ resolution.
 \end{itemize}
 %
-The two heads are the supervision mechanism: since the regime head sees only
-$\boldsymbol{z}_{\mu}$, the encoder is forced to route Reynolds-number
-information into that block, and likewise shape information into
-$\boldsymbol{z}_{g}$.
+The two small heads are the supervision mechanism, and the logic is worth
+spelling out. The regime head can only see $\boldsymbol{z}_{\mu}$; if it
+is required to predict Re, then the encoder has no choice but to route
+Reynolds-number information into that block. Likewise, the SDF head can
+only see $\boldsymbol{z}_{g}$, so shape information must flow there.
+Note what this does \emph{not} guarantee: it forces the right information
+\emph{into} the right block, but nothing yet prevents extra copies of the
+same information from also appearing in the wrong blocks. That gap drives
+most of the experiments below.
 
 \section{Training objective}
 
-Each optimization step combines four losses
-(\texttt{models/compositional/compositional\_ae.py}), weighted by
-$\lambda$-coefficients set in the configuration file:
+A \emph{loss} is a number that measures how wrong the network currently
+is; training is the process of adjusting the network's parameters to make
+a weighted sum of losses as small as possible. Each optimization step
+combines four losses (\texttt{models/compositional/compositional\_ae.py}),
+weighted by $\lambda$-coefficients set in the configuration file:
 %
 \begin{enumerate}
-  \item \textbf{Masked reconstruction (L1).} MSE between decoded and true
-        fields, evaluated over fluid points only: predictions inside the
-        solid are zeroed and the error is normalized by the fluid node
-        count, so samples with large objects are not unfairly weighted.
-  \item \textbf{Regime supervision.} MSE of
-        $\mathrm{RegimeHead}(\boldsymbol{z}_{\mu})$ against the standardized
-        $\log_{10}\mathrm{Re}$. Pulls Re into $\boldsymbol{z}_{\mu}$.
-  \item \textbf{Geometry supervision.} MSE of
-        $\mathrm{SDFHead}(\boldsymbol{z}_{g})$ against the downsampled true
-        SDF. Pulls shape into $\boldsymbol{z}_{g}$.
-  \item \textbf{Cross-block decorrelation (L6).} The mean absolute Pearson
-        correlation, computed across the batch, between every coordinate of
-        one block and every coordinate of another, penalized for all three
-        block pairs. Losses~2--3 pull information \emph{into} the correct
-        block; this term pushes redundant copies \emph{out of} the wrong
+  \item \textbf{Masked reconstruction (L1).} The mean squared error (MSE)
+        between the decoded field and the true field, evaluated over
+        fluid points only. Predictions inside the solid are zeroed out,
+        and the error is divided by the number of fluid points, so a
+        sample with a large object is not unfairly weighted. This loss
+        makes the autoencoder reconstruct accurately.
+  \item \textbf{Regime supervision.} MSE between the regime head's
+        prediction and the true standardized $\log_{10}\mathrm{Re}$.
+        This pulls Re into $\boldsymbol{z}_{\mu}$.
+  \item \textbf{Geometry supervision.} MSE between the SDF head's output
+        and the true (downsampled) SDF. This pulls the shape into
+        $\boldsymbol{z}_{g}$.
+  \item \textbf{Cross-block decorrelation (L6).} The Pearson correlation
+        between two quantities measures their linear relationship: $+1$
+        or $-1$ means perfectly related, $0$ means no linear relation.
+        Across each training batch we compute the correlation between
+        every entry of one block and every entry of another block, and
+        penalize its average absolute value, for all three block pairs.
+        The idea: losses~2--3 pull information \emph{into} the correct
+        block; this term is meant to push redundant copies \emph{out of}
+        the wrong blocks by discouraging any linear relationship between
         blocks.
 \end{enumerate}
 %
-The residual block $\boldsymbol{z}_{\xi}$ receives no supervision at all: it
-is free capacity that absorbs whatever the reconstruction needs beyond
-$(\mathrm{Re}, \text{shape})$, which is exactly the role of the residual
-block in the framework.
+The residual block $\boldsymbol{z}_{\xi}$ receives no supervision at all.
+It is free capacity that absorbs whatever the reconstruction needs beyond
+(Re, shape) --- exactly the role the framework assigns to the residual
+block.
 
 Training is driven by \texttt{main.py}: it loads the YAML configuration,
-seeds all libraries, builds the train/test datasets (passing the train
-Re-statistics to the test set), and trains with PyTorch Lightning,
-checkpointing on the best validation reconstruction error.
+fixes the random seeds (so results are repeatable), builds the train and
+test datasets (passing the training Re statistics to the test set), and
+trains with PyTorch Lightning, keeping the checkpoint with the best
+validation reconstruction error.
 
 \section{Linear-probe diagnostics}
 \label{sec:diagnostics}
 
-The diagnostic (\texttt{diagnostics/probes.py}) is the actual scientific
-test. After training, the entire test set is encoded, and for each
-(block, target) pair a ridge regression is fitted with 5-fold
-cross-validation; the resulting $R^2$ values are tabulated. For a
-compositional latent we expect the block-diagonal pattern of
-Table~\ref{tab:probes}.
+Training tells us the losses went down; it does not tell us whether the
+blocks actually mean what we intended. The diagnostic
+(\texttt{diagnostics/probes.py}) is the actual scientific test, and it
+works as follows. After training, we encode the entire test set. Then,
+for each block and each known physical quantity, we fit a \emph{linear
+probe}: a plain linear regression that tries to predict the quantity
+(say, $\log \mathrm{Re}$) from the entries of one block (say,
+$\boldsymbol{z}_{g}$) alone. We use \emph{ridge} regression (linear
+regression with a small penalty on the coefficients, which keeps the fit
+stable) and 5-fold cross-validation (fit on four fifths of the data, test
+on the remaining fifth, rotate five times, average), so the score
+reflects genuine predictive power rather than memorization.
+
+The score is $R^2$, the fraction of the target's variance the probe
+explains: $R^2 = 1$ means the quantity is perfectly readable from the
+block with a linear formula; $R^2 \approx 0$ means the block carries no
+usable linear information about it; negative values mean the probe does
+worse than simply guessing the average. For a compositional latent we
+expect the block-diagonal pattern of Table~\ref{tab:probes}: each
+quantity readable from its own block and from nowhere else.
 
 \begin{table}[htbp]
   \centering
@@ -154,29 +224,33 @@ Table~\ref{tab:probes}.
 
 If the trained latent reproduces this pattern, the factorization worked:
 Re is linearly readable from the regime block and \emph{not} from the
-geometry block, and vice versa. A high $R^2$ in an off-diagonal cell means
-information leaked --- exactly what the planned loss ablations are designed
-to study (e.g., does removing the decorrelation penalty cause leakage?).
+geometry block, and vice versa. A high $R^2$ in an off-diagonal cell
+means information \emph{leaked} into a block where it does not belong ---
+exactly what the loss-ablation experiments below are designed to study.
 
 \section{Results}
 
 \subsection{Overview}
 
-Five training runs to date, each changing one ingredient at a time.
-Table~\ref{tab:overview} summarizes the arc: the baseline separates
-blocks by supervision but leaks Re everywhere; sweeping the statistical
-decorrelation weight traces a Pareto trade-off without fixing the
-leakage; the structural losses --- same-factor invariance (L10) and swap
-consistency (L12) --- deliver separation and recombinability
-respectively. Run 5 is the current best configuration. The following
-subsections document each run in chronological detail.
+Five training runs to date, each changing one ingredient at a time so
+that any change in the outcome can be attributed to that ingredient.
+Table~\ref{tab:overview} summarizes the arc. In brief: the baseline
+(Run 1) puts the right information in the right blocks but also leaks Re
+everywhere; making the statistical decorrelation penalty stronger (Runs
+2--3) trades quality for leakage without fixing the problem; the two
+\emph{structural} losses --- same-factor invariance (L10, Run 4) and swap
+consistency (L12, Run 5) --- deliver clean separation and clean
+recombination respectively. Run 5 is the current best configuration. The
+following subsections document each run in chronological order, each
+ending with the reasoning that led to the next run.
 
 \begin{table}[htbp]
   \centering
   \caption{Summary of all runs. ``Leakage'' is the linear-probe $R^2$ of
-  $\log \mathrm{Re}$ from $\boldsymbol{z}_{g}$ (target $\lesssim 0.3$);
-  ``swap ratio'' is the same-Re swap error relative to the reconstruction
-  error (target $\approx 1$).}
+  $\log \mathrm{Re}$ read from $\boldsymbol{z}_{g}$, where it does not
+  belong (target $\lesssim 0.3$); ``swap ratio'' is the same-Re swap
+  error relative to the reconstruction error (target $\approx 1$; defined
+  in Section~\ref{sec:swap}).}
   \label{tab:overview}
   \begin{tabular}{llccl}
     \toprule
@@ -193,14 +267,16 @@ subsections document each run in chronological detail.
 
 \subsection{Run 1: baseline loss weights}
 
-First training run on the FlowBench LDC ``easy'' split (2{,}400 train /
-600 test samples): 200 epochs, batch size 16, resolution $256^2$, loss
-weights $\lambda_{\mathrm{recon}} = 1.0$, $\lambda_{\mathrm{regime}} =
+First training run on the FlowBench LDC ``easy'' split (2{,}400 training
+/ 600 test samples): 200 epochs (an epoch is one full pass through the
+training data), batch size 16, resolution $256^2$, loss weights
+$\lambda_{\mathrm{recon}} = 1.0$, $\lambda_{\mathrm{regime}} =
 \lambda_{\mathrm{geo}} = 0.1$, $\lambda_{\mathrm{decorr}} = 0.01$
-(single NVIDIA GPU, $\sim$18 minutes). Final masked reconstruction error:
-train $2.7 \times 10^{-3}$, validation $2.1 \times 10^{-3}$, with no sign
-of overfitting. Table~\ref{tab:probes-run1} reports the measured
-linear-probe $R^2$.
+(single NVIDIA GPU, $\sim$18 minutes). The final masked reconstruction
+error was $2.7 \times 10^{-3}$ on the training set and $2.1 \times
+10^{-3}$ on the validation set --- similar values, so the network is not
+merely memorizing the training data. Table~\ref{tab:probes-run1} reports
+the measured linear-probe $R^2$.
 
 \begin{table}[htbp]
   \centering
@@ -224,38 +300,42 @@ linear-probe $R^2$.
 $\boldsymbol{z}_{\mu}$ reads $\log \mathrm{Re}$ at $R^2 = 0.994$ and
 contains essentially no geometry ($R^2 \le 0.04$). Geometry is readable
 from $\boldsymbol{z}_{g}$ ($R^2 \approx 0.69$--$0.74$) and nearly absent
-from $\boldsymbol{z}_{\mu}$. The moderate (rather than high) geometry
-recovery is not alarming: the probes are linear, while area and centroid
-are nonlinear functionals of the SDF that $\boldsymbol{z}_{g}$ encodes.
+from $\boldsymbol{z}_{\mu}$. The moderate (rather than near-perfect)
+geometry scores are not alarming: the probes are \emph{linear}, while
+area and centroid depend on the encoded shape in a nonlinear way, so even
+a perfect geometry block would not give $R^2 = 1$ here.
 
 \paragraph{What failed.} Reynolds-number information leaked into the
-other blocks: $\log \mathrm{Re}$ is readable from $\boldsymbol{z}_{g}$ at
-$R^2 = 0.900$ and from $\boldsymbol{z}_{\xi}$ at $0.777$. This is exactly
-the factor-scrambling that the impossibility result of Locatello et al.\
-predicts for unconstrained latents: the decoder needs Re to reconstruct
-the field and is free to stash copies of it in every block, and the
-reconstruction loss rewards doing so. The decorrelation penalty is meant
-to prevent this, but at $\lambda_{\mathrm{decorr}} = 0.01$ it is roughly
-two orders of magnitude weaker than the reconstruction term and loses the
+other blocks: $\log \mathrm{Re}$ is readable from $\boldsymbol{z}_{g}$
+at $R^2 = 0.900$ and from $\boldsymbol{z}_{\xi}$ at $0.777$. The reason
+is easy to see. The decoder needs Re to rebuild the field, and nothing
+stops the encoder from stashing a copy of Re in \emph{every} block --- in
+fact the reconstruction loss rewards extra copies, because they can only
+help the decoder. A well-known theoretical result (Locatello et al.)
+says precisely this: without extra constraints, a network that
+reconstructs well is free to scramble the underlying factors across its
+latent however it likes. The decorrelation penalty is supposed to prevent
+the copies, but at $\lambda_{\mathrm{decorr}} = 0.01$ it is roughly a
+hundred times weaker than the reconstruction term, and it loses the
 competition.
 
-\paragraph{Next experiment.} Since the leaked Re is \emph{linearly}
-recoverable from $\boldsymbol{z}_{g}$ --- which is precisely what a
-Pearson penalty can act on --- the next run raises
-$\lambda_{\mathrm{decorr}}$ from $0.01$ to $0.5$ with all else fixed.
-Success criteria: the off-diagonal $\log \mathrm{Re}$ entries drop
-substantially (toward $R^2 \lesssim 0.3$) while the reconstruction error
-and the $\boldsymbol{z}_{g}$ geometry row remain near their Run-1 values.
-If a strong Pearson weight cannot remove the leakage, the natural
-escalation is HSIC (L7, nonlinear dependence) and the swap-consistency
-loss (L12), which makes the factorization functional rather than merely
-statistical.
+\paragraph{Next experiment.} The leaked Re is \emph{linearly} readable
+from $\boldsymbol{z}_{g}$ --- and a linear relationship is exactly what a
+Pearson penalty acts on. So the next run raises
+$\lambda_{\mathrm{decorr}}$ from $0.01$ to $0.5$, changing nothing else.
+Success would mean: the off-diagonal $\log \mathrm{Re}$ entries drop
+substantially (toward $R^2 \lesssim 0.3$) while reconstruction and the
+geometry row stay near their Run-1 values. If even a strong Pearson
+weight cannot remove the leakage, the natural escalation is HSIC (L7, a
+penalty that detects nonlinear dependence too) and the swap-consistency
+loss (L12), which attacks the problem functionally rather than
+statistically.
 
 \subsection{Run 2: strong Pearson decorrelation}
 
-Identical to Run~1 except $\lambda_{\mathrm{decorr}} = 0.5$ (a $50\times$
-increase). Table~\ref{tab:probes-run2} reports the measured linear-probe
-$R^2$, with the Run-1 values for comparison.
+Identical to Run~1 except $\lambda_{\mathrm{decorr}} = 0.5$, a $50\times$
+increase. Table~\ref{tab:probes-run2} reports the measured linear-probe
+$R^2$, with the Run-1 values in parentheses for comparison.
 
 \begin{table}[htbp]
   \centering
@@ -276,36 +356,40 @@ $R^2$, with the Run-1 values for comparison.
   \end{tabular}
 \end{table}
 
-\paragraph{Outcome: a Pareto trade-off, not a fix.} The leakage shrank
---- $\log \mathrm{Re}$ from $\boldsymbol{z}_{g}$ dropped from $0.900$ to
-$0.719$ and from $\boldsymbol{z}_{\xi}$ from $0.777$ to $0.487$ --- but
-so did everything else: the on-diagonal regime readout degraded
-($0.994 \to 0.886$) and the geometry recovery from $\boldsymbol{z}_{g}$
-fell by roughly $0.2$ across all three descriptors. The strong Pearson
-penalty cannot distinguish redundant copies of information (which we want
-removed) from informative, structured coordinates (which we want kept),
-so at large weight it partially scrambles all blocks while still leaving
-the leakage far above the $R^2 \lesssim 0.3$ target. A $50\times$
-increase in decorrelation pressure bought a modest leakage reduction at a
-real cost --- strong evidence that weight tuning of a statistical
-independence penalty alone will not functionally separate the blocks.
+\paragraph{Outcome: a trade-off, not a fix.} The leakage did shrink ---
+$\log \mathrm{Re}$ from $\boldsymbol{z}_{g}$ dropped from $0.900$ to
+$0.719$, and from $\boldsymbol{z}_{\xi}$ from $0.777$ to $0.487$ --- but
+everything else got worse too: the on-diagonal regime readout degraded
+($0.994 \to 0.886$) and geometry recovery from $\boldsymbol{z}_{g}$ fell
+by roughly $0.2$ on all three descriptors. This is what economists call a
+\emph{Pareto trade-off}: one goal improves only by sacrificing another,
+with no setting that improves both. The underlying reason is that the
+Pearson penalty is a blunt instrument. It cannot tell the difference
+between a redundant \emph{copy} of information (which we want removed)
+and informative, structured coordinates (which we want kept); at a large
+weight it simply flattens all correlations, scrambling every block a
+little --- while the leakage still sits far above the $R^2 \lesssim 0.3$
+target. A $50\times$ stronger penalty bought a modest leakage reduction
+at a real cost: strong evidence that tuning the weight of a statistical
+independence penalty will not, by itself, separate the blocks.
 
 \paragraph{Next experiments.} Two directions, in order:
-(i)~$\lambda_{\mathrm{decorr}} = 0.1$ as an intermediate sweep point ---
-together with Runs~1--2 this begins the (reconstruction,
-identifiability) Pareto front that the project plan targets;
-(ii)~\emph{same-factor invariance} (L10): the dataset contains each
-geometry at multiple Reynolds numbers, so we can penalize the variance of
-$\boldsymbol{z}_{g}$ across samples that share a geometry. This demands
-directly that $\boldsymbol{z}_{g}$ be unchanged when only Re changes ---
-a functional constraint on the factorization rather than a statistical
-one, and the first step toward the group-structured supervision at the
-heart of the framework's identifiability argument.
+(i)~$\lambda_{\mathrm{decorr}} = 0.1$ as an intermediate point --- with
+Runs 1--2 it maps out how the trade-off curve behaves between the two
+extremes; (ii)~\emph{same-factor invariance} (L10). The dataset contains
+each geometry simulated at several Reynolds numbers, and that structure
+can be exploited directly: penalize any \emph{variation} of
+$\boldsymbol{z}_{g}$ across samples that share a geometry. Since those
+samples differ only in Re, this demands outright that
+$\boldsymbol{z}_{g}$ not change when only Re changes --- a
+\emph{functional} constraint on the encoder's behavior, rather than a
+statistical property of a batch.
 
-\subsection{Run 3: intermediate decorrelation --- the Pareto verdict}
+\subsection{Run 3: intermediate decorrelation --- the verdict on the sweep}
 
 Identical to Runs~1--2 except $\lambda_{\mathrm{decorr}} = 0.1$.
-Table~\ref{tab:probes-run3} completes the three-point weight sweep.
+Table~\ref{tab:probes-run3} assembles the complete three-point weight
+sweep in one place.
 
 \begin{table}[htbp]
   \centering
@@ -337,45 +421,46 @@ Table~\ref{tab:probes-run3} completes the three-point weight sweep.
 \end{table}
 
 \paragraph{Verdict on statistical decorrelation.} The intermediate weight
-recovers nearly all of Run~1's representation quality (regime readout
-$0.978$, geometry $0.66$--$0.71$) but buys almost no leakage reduction
+keeps nearly all of Run~1's quality (regime readout $0.978$, geometry
+$0.66$--$0.71$) but buys almost no leakage reduction
 ($\log \mathrm{Re}$ from $\boldsymbol{z}_{g}$: $0.900 \to 0.865$). Across
-the sweep, leakage falls only when representation quality is heavily
-taxed: there is no weight at which the Pearson penalty removes the
-redundant Reynolds copy while preserving the blocks' intended content.
-This is a clean negative result, and it matches the framework's
-prediction: statistical independence penalties cannot make a
-factorization \emph{functional}. The next run therefore moves to the
+the whole sweep, leakage falls only when representation quality is
+heavily taxed: there is \emph{no} weight at which the Pearson penalty
+removes the redundant Reynolds copy while preserving what the blocks are
+supposed to contain. This is a clean negative result, and it matches the
+framework's prediction: statistical independence penalties cannot make a
+factorization \emph{functional}. The next run therefore switches to the
 structural tool.
 
-\paragraph{Run 4: same-factor invariance (L10).} The dataset contains
-each geometry at multiple Reynolds numbers, which enables group-structured
-minibatches: each training batch is composed of a few geometry groups
-with several Re per group, and the loss
+\paragraph{Setting up Run 4: same-factor invariance (L10).} Because each
+geometry appears at several Reynolds numbers, we can build
+\emph{group-structured minibatches}: instead of sampling training batches
+at random, each batch is deliberately composed of a few geometry groups,
+each contributing the same shape at several different Re. The new loss is
 %
 \begin{equation}
   \mathcal{L}_{\mathrm{inv}}
   \;=\;
   \mathbb{E}_{\text{groups}}
   \Bigl[ \bigl\| \boldsymbol{z}_{g}^{(i)} -
-  \overline{\boldsymbol{z}_{g}}^{\,\text{group}} \bigr\|^2 \Bigr]
+  \overline{\boldsymbol{z}_{g}}^{\,\text{group}} \bigr\|^2 \Bigr],
 \end{equation}
 %
-penalizes any variation of $\boldsymbol{z}_{g}$ within a group. Since
-samples in a group differ \emph{only} in Re, any Re content in
-$\boldsymbol{z}_{g}$ contributes directly to this loss: it demands
-invariance as a functional property rather than decorrelation as a batch
-statistic. Run 4 uses $\lambda_{\mathrm{decorr}} = 0.01$ (the Run-1
-value) plus the invariance term, so that any improvement is attributable
-to L10 alone.
+the average squared distance between each sample's geometry code and the
+mean geometry code of its group. Samples within a group differ
+\emph{only} in Re; so if $\boldsymbol{z}_{g}$ contains any Re content at
+all, it must vary within the group, and this loss punishes it directly.
+Run 4 keeps $\lambda_{\mathrm{decorr}} = 0.01$ (the Run-1 value) and adds
+only the invariance term, so any improvement is attributable to L10
+alone.
 
 \subsection{Run 4: same-factor invariance --- the structural loss succeeds}
 
-Run 4 uses the Run-1 weights ($\lambda_{\mathrm{decorr}} = 0.01$) plus the
-same-factor invariance term with $\lambda_{\mathrm{inv}} = 0.1$, trained
-on group-structured minibatches (four geometry groups of four Reynolds
-numbers per batch of 16). Table~\ref{tab:probes-run4} reports the probe
-$R^2$ against the Run-1 baseline.
+Run 4 uses the Run-1 weights plus the same-factor invariance term with
+$\lambda_{\mathrm{inv}} = 0.1$, trained on group-structured minibatches
+(four geometry groups of four Reynolds numbers per batch of 16).
+Table~\ref{tab:probes-run4} reports the probe $R^2$ against the Run-1
+baseline.
 
 \begin{table}[htbp]
   \centering
@@ -398,42 +483,46 @@ $R^2$ against the Run-1 baseline.
 \paragraph{Outcome.} The Reynolds leakage into the geometry block
 collapsed from $R^2 = 0.900$ to $0.215$ --- below the $0.3$ target ---
 at essentially no cost: the regime readout is intact ($0.986$) and the
-geometry recovery from $\boldsymbol{z}_{g}$ is marginally \emph{better}
-than the baseline ($0.68$--$0.76$). Even the residual block cleaned up
-substantially ($0.777 \to 0.412$) although nothing constrains it
-directly: with $\boldsymbol{z}_{g}$ forced to be Re-free, the decoder
-relies on $\boldsymbol{z}_{\mu}$ for regime information and the redundant
-copies decay. Contrasted with the weight sweep of
-Table~\ref{tab:probes-run3} --- where a $50\times$ stronger statistical
-penalty could not achieve this at any acceptable price --- this is the
-framework's central claim demonstrated on real data: \emph{functional}
-constraints (invariance within factor groups, enabled by the factorized
-experimental design of the dataset) separate the blocks where
-\emph{statistical} independence penalties cannot. The probe matrix now
-shows the intended block-diagonal pattern for both supervised blocks.
+geometry recovery is even marginally \emph{better} than the baseline
+($0.68$--$0.76$). The residual block also cleaned up substantially
+($0.777 \to 0.412$) although nothing constrains it directly; the likely
+explanation is that once $\boldsymbol{z}_{g}$ is forced to be Re-free,
+the decoder comes to rely on $\boldsymbol{z}_{\mu}$ for the operating
+point, and the now-useless copies elsewhere fade. Contrast this with the
+weight sweep of Table~\ref{tab:probes-run3}, where a $50\times$ stronger
+statistical penalty could not achieve the same thing at any acceptable
+price. This is the framework's central claim demonstrated on real data:
+\emph{functional} constraints --- invariance within factor groups, made
+possible by the fact that the dataset was generated on a designed
+(Re, shape) grid --- separate the blocks where \emph{statistical}
+independence penalties cannot. The probe matrix now shows the intended
+block-diagonal pattern for both supervised blocks.
 
 \paragraph{Remaining gap and next experiments.} The residual block still
 carries moderate Re content ($R^2 = 0.412$). Natural next steps:
-(i)~\emph{swap consistency} (L12) --- decode $\boldsymbol{z}_{\mu}$ from
-one sample with $\boldsymbol{z}_{g}$ from another and compare to the true
-cross-combination, upgrading the diagnostic from ``blocks are separate''
-to ``blocks are \emph{recombinable}''; (ii)~concept-vector arithmetic on
-$\boldsymbol{z}_{\mu}$ and $\boldsymbol{z}_{g}$; (iii)~shrinking
-$L_{\xi}$, since a steady, deterministic dataset arguably needs little
-residual capacity.
+(i)~\emph{swap consistency} (L12) --- decode the regime code of one
+sample together with the geometry code of another and compare against the
+true field for that combination, upgrading the demand from ``blocks are
+separate'' to ``blocks are \emph{recombinable}'';
+(ii)~concept-vector arithmetic on $\boldsymbol{z}_{\mu}$ and
+$\boldsymbol{z}_{g}$; (iii)~shrinking the residual block, since a steady,
+deterministic dataset arguably needs little residual capacity.
 
 \subsection{Run 5: adding swap consistency}
 
 Run 5 adds the swap-consistency loss (L12) on top of the Run-4
-configuration ($\lambda_{\mathrm{swap}} = 0.1$). For in-batch pairs
-$(i, k)$ at the same Reynolds number but different geometry --- 87\% of
-training samples have such a partner --- the decoder must reproduce
-sample $k$'s true field from the hybrid latent
+configuration ($\lambda_{\mathrm{swap}} = 0.1$). The idea: if two samples
+$i$ and $k$ sit at the \emph{same} Reynolds number but have
+\emph{different} geometries --- and 87\% of training samples have such a
+partner --- then the decoder should be able to rebuild sample $k$'s field
+from the hybrid latent
 $[\boldsymbol{z}_{\mu}^{(i)} \,\|\, \boldsymbol{z}_{g}^{(k)} \,\|\,
-\boldsymbol{z}_{\xi}^{(k)}]$: the regime code must be \emph{functionally
-interchangeable} across geometries at fixed dynamic similarity.
-Table~\ref{tab:probes-run5} reports the probes, with Run-4 values in
-parentheses.
+\boldsymbol{z}_{\xi}^{(k)}]$, i.e.\ with $k$'s own geometry and residual
+codes but $i$'s regime code. Since $i$ and $k$ share the same Re, a truly
+compositional model should not care whose regime code it gets: the regime
+code must be \emph{functionally interchangeable} across geometries at the
+same operating condition. Table~\ref{tab:probes-run5} reports the probes,
+with Run-4 values in parentheses.
 
 \begin{table}[htbp]
   \centering
@@ -453,41 +542,42 @@ parentheses.
   \end{tabular}
 \end{table}
 
-\paragraph{Outcome.} The block-diagonal pattern is preserved, the
+\paragraph{Outcome.} The block-diagonal pattern is preserved; the
 predicted cleanup of the residual block occurred (Re from
-$\boldsymbol{z}_{\xi}$: $0.412 \to 0.356$; swap decoding uses the
-target's $\boldsymbol{z}_{\xi}$ with the source's
-$\boldsymbol{z}_{\mu}$, punishing Re content hidden in the residual),
-and geometry recovery from $\boldsymbol{z}_{g}$ is the best of all runs
-($0.69$--$0.77$). The one cell that moved the wrong way is Re from
-$\boldsymbol{z}_{g}$ ($0.215 \to 0.343$); differences of this size
-between single-seed runs should not be over-interpreted --- resolving
-them requires the multi-seed protocol of the project plan. The honest
-summary at this stage: \emph{same-factor invariance (L10) is the
-decisive ingredient for block separation; the marginal effect of L12 on
-the probe matrix is small and within plausible seed variance.}
+$\boldsymbol{z}_{\xi}$: $0.412 \to 0.356$ --- swap decoding pairs the
+target's residual with a foreign regime code, so Re hidden in the
+residual gets punished); and geometry recovery is the best of all runs
+($0.69$--$0.77$). One cell moved the wrong way: Re from
+$\boldsymbol{z}_{g}$ rose from $0.215$ to $0.343$. Differences of this
+size between two runs that differ in random initialization should not be
+over-interpreted; deciding whether the change is real requires repeating
+each configuration with several random seeds and comparing averages (the
+multi-seed protocol of the project plan). The honest summary at this
+stage: \emph{same-factor invariance (L10) is the decisive ingredient for
+block separation; the effect of L12 on the probe matrix is small and
+within plausible run-to-run variation.}
 
-\paragraph{What the probes cannot see.} Linear probes measure whether a
-block \emph{contains} the right information, not whether the blocks are
-\emph{recombinable through the decoder} --- which is precisely the
-property L12 trains. The next diagnostic increment is therefore a
-swap-error metric on the test set: encode two samples, decode the hybrid
-latent, and compare against the true cross-combination field; reported
-alongside the ordinary reconstruction error, it quantifies
-compositionality directly. Further planned steps: multi-seed variance
-estimates for Runs 4--5, and concept-vector arithmetic on
-$\boldsymbol{z}_{\mu}$ and $\boldsymbol{z}_{g}$.
+\paragraph{What the probes cannot see.} A linear probe measures whether a
+block \emph{contains} the right information. It says nothing about
+whether the decoder can actually \emph{recombine} blocks from different
+samples --- which is precisely the property L12 trains. To measure that,
+we need a different instrument: encode two samples, decode the hybrid
+latent, and compare against the true field for that combination. That
+swap-error metric is built next.
 
 \subsection{Swap-error diagnostic: separation is not recombinability}
+\label{sec:swap}
 
-The swap-error metric decodes the hybrid latent
+The swap-error metric works on the trained model without any retraining:
+for same-Re, different-geometry test pairs, decode the hybrid latent
 $[\boldsymbol{z}_{\mu}^{(i)} \,\|\, \boldsymbol{z}_{g}^{(k)} \,\|\,
-\boldsymbol{z}_{\xi}^{(k)}]$ for same-Re, different-geometry test pairs
-and compares against sample $k$'s true field; reported as a ratio to the
-ordinary reconstruction error on the same samples, so ratio $\approx 1$
-means swapping in another sample's regime code costs nothing. Because
-the metric needs no retraining, it was evaluated retroactively on the
-three key checkpoints (Table~\ref{tab:swap}).
+\boldsymbol{z}_{\xi}^{(k)}]$ and measure its error against sample $k$'s
+true field. We report it as a \emph{ratio} to the ordinary reconstruction
+error on the same samples: ratio $\approx 1$ means swapping in another
+sample's regime code costs nothing extra; a large ratio means the decoder
+secretly cares which sample the regime code came from. Because no
+retraining is needed, the metric was evaluated retroactively on the three
+key stored checkpoints (Table~\ref{tab:swap}).
 
 \begin{table}[htbp]
   \centering
@@ -507,30 +597,34 @@ three key checkpoints (Table~\ref{tab:swap}).
 
 \paragraph{Interpretation.} The three numbers tell a story the probe
 tables could not. Run 1 passes the swap test (1.06) \emph{for the wrong
-reason}: the decoder held redundant Re copies in every block, so it
-barely depended on which sample's $\boldsymbol{z}_{\mu}$ it received.
-Run 4's training removed the redundancy --- and thereby made the decoder
-genuinely dependent on $\boldsymbol{z}_{\mu}$, so sample-to-sample noise
-in the regime code now propagates to the output (1.35): \emph{separation
-alone makes the factorization brittle}. Run 5's swap loss trains
-exactly that sensitivity away, restoring ratio 1.04 while keeping the
-probe separation. The combination --- blocks that are both separated
-\emph{and} functionally interchangeable --- requires both structural
-losses; neither the probe matrix nor the swap ratio alone certifies it.
-Run 5 is the best configuration overall.
+reason}: its decoder held redundant Re copies in every block, so it
+barely depended on which sample's $\boldsymbol{z}_{\mu}$ it received ---
+if you ignore an input, swapping that input is painless. Run 4's training
+removed the redundancy, which made the decoder genuinely dependent on
+$\boldsymbol{z}_{\mu}$; now the small sample-to-sample differences in the
+regime code propagate to the output (1.35). In other words,
+\emph{separation alone makes the factorization brittle}. Run 5's swap
+loss trains exactly that sensitivity away, restoring the ratio to 1.04
+while keeping the probe separation. The combination --- blocks that are
+both separated \emph{and} functionally interchangeable --- requires both
+structural losses, and neither the probe matrix nor the swap ratio alone
+certifies both properties. Run 5 is the best configuration overall.
 
 \subsection{Cross-Re swap: the transfer test fails --- for every model}
 
-The same-Re swap is a consistency test, but a weak one when regime
-supervision makes $\boldsymbol{z}_{\mu}$ nearly deterministic in Re. The
-demanding test is the \emph{cross-Re} swap: take $\boldsymbol{z}_{\mu}$
-from a sample at $\mathrm{Re}_i$ and $\boldsymbol{z}_{g},
-\boldsymbol{z}_{\xi}$ from a different geometry observed at a different
-Re, decode, and compare against the true field of that geometry at
-$\mathrm{Re}_i$ (present in the dataset). This is genuine
-\emph{transfer} --- using the regime code to move a geometry to a new
-operating point. Table~\ref{tab:xswap} reports the measurement on the
-three stored checkpoints.
+The same-Re swap is a consistency check, but a weak one: regime
+supervision makes $\boldsymbol{z}_{\mu}$ almost a pure function of Re, so
+two same-Re samples have nearly identical regime codes, and swapping them
+is a small perturbation. The demanding test is the \emph{cross-Re} swap:
+take $\boldsymbol{z}_{\mu}$ from a sample at $\mathrm{Re}_i$, take
+$\boldsymbol{z}_{g}, \boldsymbol{z}_{\xi}$ from a \emph{different}
+geometry observed at a \emph{different} Re, decode, and compare against
+the true field of that geometry at $\mathrm{Re}_i$ --- which exists in
+the dataset, so we have exact ground truth. This is genuine
+\emph{transfer}: using the regime code to move a geometry to an operating
+point where the model never saw that particular latent combination.
+Table~\ref{tab:xswap} reports the measurement on the three stored
+checkpoints.
 
 \begin{table}[htbp]
   \centering
@@ -549,33 +643,35 @@ three stored checkpoints.
 \end{table}
 
 \paragraph{Outcome: falsified.} Every model fails the transfer test
-catastrophically --- cross-Re swap errors are two orders of magnitude
-above reconstruction error, barely improved by the structural losses.
-The blocks are separated (probes) and consistently interchangeable at
-matched conditions (same-Re swap), but the decoder cannot \emph{compose}
-a regime code with a geometry pair it never saw in that combination:
-strong compositionality, in the transfer sense the framework ultimately
-targets, does not emerge from separation and same-Re consistency alone.
-This is the diagnostic doing its job --- a falsifiable prediction,
-falsified --- and it sharpens the mechanism question: since
-$\boldsymbol{z}_{\xi}$ still carries Re ($R^2 \approx 0.36$) and is
-taken from the donor geometry at the \emph{wrong} Re, the decoder may be
-reading the operating point from the residual rather than from
-$\boldsymbol{z}_{\mu}$. The diagnostic now also reports the swapped
-output's error against the donor's own field to test exactly this.
+catastrophically: cross-Re swap errors are two hundred times the
+reconstruction error, barely improved by the structural losses. So the
+blocks are separated (probes pass), and interchangeable at matched
+conditions (same-Re swap passes), yet the decoder cannot \emph{compose} a
+regime code with a geometry it never saw at that operating point. Strong
+compositionality --- the transfer ability the framework ultimately wants
+--- does not emerge from separation and same-Re consistency alone. This
+is the diagnostic doing its job: we made a falsifiable prediction, and it
+was falsified. It also sharpens the question of \emph{mechanism}: the
+residual block still carries Re ($R^2 \approx 0.36$), and in the cross-Re
+swap the residual comes from the donor geometry at the \emph{wrong} Re
+--- so the decoder may be reading the operating point from the residual
+rather than from $\boldsymbol{z}_{\mu}$. To test exactly this, the
+diagnostic now also reports the swapped output's error against the
+donor's own field: if that error is small, the decoder followed the
+residual's Re and ignored the regime code.
 
-\paragraph{Run 6: cross-Re swap as a training loss.} The dataset
-contains the required cross-combinations, so the transfer demand can be
-trained directly: for in-batch triples $(i, k, m)$ with $\mathrm{re}_m =
-\mathrm{re}_i$, $\mathrm{geo}_m = \mathrm{geo}_k \ne \mathrm{geo}_i$ and
-$\mathrm{re}_k \ne \mathrm{re}_i$, decoding $[\boldsymbol{z}_{\mu}^{(i)}
-\,\|\, \boldsymbol{z}_{g}^{(k)} \,\|\, \boldsymbol{z}_{\xi}^{(k)}]$ must
-reproduce sample $m$ --- geometry $k$ moved to operating point
-$\mathrm{Re}_i$. This forces the decoder to take the operating point
-from $\boldsymbol{z}_{\mu}$ and to treat $(\boldsymbol{z}_{g},
-\boldsymbol{z}_{\xi})$ as Re-free, attacking the residual leakage as a
-side effect. Run 6 adds this term ($\lambda_{\mathrm{xswap}} = 0.1$) to
-the Run-5 configuration.
+\paragraph{Run 6: cross-Re swap as a training loss.} The dataset contains
+the required cross-combinations, so the transfer demand can be trained
+directly rather than merely tested. For in-batch triples $(i, k, m)$ with
+$\mathrm{re}_m = \mathrm{re}_i$, $\mathrm{geo}_m = \mathrm{geo}_k \ne
+\mathrm{geo}_i$ and $\mathrm{re}_k \ne \mathrm{re}_i$, decoding
+$[\boldsymbol{z}_{\mu}^{(i)} \,\|\, \boldsymbol{z}_{g}^{(k)} \,\|\,
+\boldsymbol{z}_{\xi}^{(k)}]$ must reproduce sample $m$ --- geometry $k$
+moved to operating point $\mathrm{Re}_i$. This forces the decoder to take
+the operating point from $\boldsymbol{z}_{\mu}$ and to treat
+$(\boldsymbol{z}_{g}, \boldsymbol{z}_{\xi})$ as Re-free, attacking the
+residual leakage as a side effect. Run 6 adds this term
+($\lambda_{\mathrm{xswap}} = 0.1$) to the Run-5 configuration.
 
 \section{Status and next steps}
 
@@ -588,34 +684,39 @@ runnable on stored checkpoints without retraining. The headline
 methodological finding so far: \emph{statistical decorrelation cannot
 functionally separate the blocks at any weight, while the two structural
 losses achieve separation (L10) and recombinability (L12) at essentially
-no cost to reconstruction} --- and the two properties are distinct:
-each requires its own loss, and each is invisible to the other's
-diagnostic.
+no cost to reconstruction}. Moreover the two properties are genuinely
+distinct: each requires its own loss, and each is invisible to the other
+property's diagnostic.
 
 \paragraph{Planned increments, in order.}
 %
 \begin{itemize}
   \item \textbf{Cross-Re swap measurement} on the Run-1/4/5 checkpoints
-        (in progress). If even Run 5's cross-Re ratio is large, promote
-        cross-Re swapping from diagnostic to training loss (Run 6): the
-        dataset contains the required cross-combinations.
+        (done --- all models fail; see Table~\ref{tab:xswap}), leading to
+        \textbf{Run 6}: cross-Re swapping promoted from diagnostic to
+        training loss (in progress).
   \item \textbf{Multi-seed protocol}: rerun the Run-4 and Run-5
-        configurations at 2--3 seeds to put error bars on the probe
-        tables and settle the small differences (e.g.\ leakage
-        $0.215$ vs.\ $0.343$) currently attributed to seed variance.
+        configurations with 2--3 different random seeds to put error bars
+        on the probe tables and settle the small differences (e.g.\
+        leakage $0.215$ vs.\ $0.343$) currently attributed to
+        run-to-run variation.
   \item \textbf{Concept-vector arithmetic} on $\boldsymbol{z}_{\mu}$ and
-        $\boldsymbol{z}_{g}$ (the AeroJEPA-style sensitivity matrix; a
-        Week-15 success criterion of the project plan).
-  \item \textbf{Residual capacity}: shrink $L_{\xi}$ (e.g.\ $16 \to 4$)
-        --- a steady, deterministic dataset needs little residual
-        capacity, and less room may squeeze out the Re content remaining
-        in $\boldsymbol{z}_{\xi}$ ($R^2 \approx 0.36$).
-  \item \textbf{Loss library extensions}: HSIC (L7) for nonlinear
-        residual dependence; boundary-layer weighted reconstruction (L3).
-  \item \textbf{Architecture}: INR-style implicit decoder for
-        resolution-free queries.
-  \item \textbf{Beyond steady flow}: dynamics block
-        $\boldsymbol{z}_{\eta}$ and latent propagator $\Phi$ for
+        $\boldsymbol{z}_{g}$: walk the latent along the direction
+        associated with one parameter and check that only that parameter
+        responds (the AeroJEPA-style sensitivity matrix; a Week-15
+        success criterion of the project plan).
+  \item \textbf{Residual capacity}: shrink the residual block (e.g.\
+        $16 \to 4$ dimensions) --- a steady, deterministic dataset needs
+        little residual capacity, and less room may squeeze out the Re
+        content remaining in $\boldsymbol{z}_{\xi}$ ($R^2 \approx 0.36$).
+  \item \textbf{Loss library extensions}: HSIC (L7), which detects
+        nonlinear dependence between blocks, not just linear correlation;
+        boundary-layer weighted reconstruction (L3), which weights errors
+        near the object surface more heavily.
+  \item \textbf{Architecture}: an INR-style implicit decoder, which can
+        be queried at any spatial point rather than on a fixed grid.
+  \item \textbf{Beyond steady flow}: the dynamics block
+        $\boldsymbol{z}_{\eta}$ and a latent time-stepper $\Phi$ for
         time-dependent cases (the framework's Path B/C), moving toward
         the warm-up and Case-1 studies of the anchor paper.
 \end{itemize}
