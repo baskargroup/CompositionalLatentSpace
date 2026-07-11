@@ -338,6 +338,59 @@ statistic. Run 4 uses $\lambda_{\mathrm{decorr}} = 0.01$ (the Run-1
 value) plus the invariance term, so that any improvement is attributable
 to L10 alone.
 
+\subsection{Run 4: same-factor invariance --- the structural loss succeeds}
+
+Run 4 uses the Run-1 weights ($\lambda_{\mathrm{decorr}} = 0.01$) plus the
+same-factor invariance term with $\lambda_{\mathrm{inv}} = 0.1$, trained
+on group-structured minibatches (four geometry groups of four Reynolds
+numbers per batch of 16). Table~\ref{tab:probes-run4} reports the probe
+$R^2$ against the Run-1 baseline.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Run 4: linear-probe $R^2$ with the same-factor invariance loss
+  (L10), Run-1 values in parentheses. Bold marks the block that should
+  carry each target.}
+  \label{tab:probes-run4}
+  \begin{tabular}{lccc}
+    \toprule
+    Target & $\boldsymbol{z}_{\mu}$ & $\boldsymbol{z}_{g}$ & $\boldsymbol{z}_{\xi}$ \\
+    \midrule
+    $\log \mathrm{Re}$ & \textbf{0.986} (0.994) & 0.215 (0.900) & 0.412 (0.777) \\
+    Area fraction      & $-0.003$ (0.042)       & \textbf{0.677} (0.688) & 0.130 (0.172) \\
+    Centroid $x$       & 0.009 (0.027)          & \textbf{0.756} (0.736) & 0.143 (0.373) \\
+    Centroid $y$       & 0.011 ($-0.013$)       & \textbf{0.711} (0.690) & 0.047 (0.214) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Outcome.} The Reynolds leakage into the geometry block
+collapsed from $R^2 = 0.900$ to $0.215$ --- below the $0.3$ target ---
+at essentially no cost: the regime readout is intact ($0.986$) and the
+geometry recovery from $\boldsymbol{z}_{g}$ is marginally \emph{better}
+than the baseline ($0.68$--$0.76$). Even the residual block cleaned up
+substantially ($0.777 \to 0.412$) although nothing constrains it
+directly: with $\boldsymbol{z}_{g}$ forced to be Re-free, the decoder
+relies on $\boldsymbol{z}_{\mu}$ for regime information and the redundant
+copies decay. Contrasted with the weight sweep of
+Table~\ref{tab:probes-run3} --- where a $50\times$ stronger statistical
+penalty could not achieve this at any acceptable price --- this is the
+framework's central claim demonstrated on real data: \emph{functional}
+constraints (invariance within factor groups, enabled by the factorized
+experimental design of the dataset) separate the blocks where
+\emph{statistical} independence penalties cannot. The probe matrix now
+shows the intended block-diagonal pattern for both supervised blocks.
+
+\paragraph{Remaining gap and next experiments.} The residual block still
+carries moderate Re content ($R^2 = 0.412$). Natural next steps:
+(i)~\emph{swap consistency} (L12) --- decode $\boldsymbol{z}_{\mu}$ from
+one sample with $\boldsymbol{z}_{g}$ from another and compare to the true
+cross-combination, upgrading the diagnostic from ``blocks are separate''
+to ``blocks are \emph{recombinable}''; (ii)~concept-vector arithmetic on
+$\boldsymbol{z}_{\mu}$ and $\boldsymbol{z}_{g}$; (iii)~shrinking
+$L_{\xi}$, since a steady, deterministic dataset arguably needs little
+residual capacity.
+
 \section{Next steps}
 
 Deliberately excluded from this first version and planned as increments once
