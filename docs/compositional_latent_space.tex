@@ -1,12 +1,62 @@
 \documentclass[11pt]{article}
 \usepackage[a4paper, left=1.5cm,right=1.5cm,top=2cm,bottom=2cm]{geometry}
-\usepackage{graphicx} % Required for inserting images
-\usepackage{amsmath}  % Math environments and symbols
-\usepackage{amssymb}  % \mathbb and extra symbols
-\usepackage{booktabs} % Nicer tables (\toprule, \midrule, \bottomrule)
 
-\title{Compositional Latent Space}
-\author{Suresh Murugaiyan}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Page layout and formatting
+\usepackage{authblk}        % For author affiliations
+\setlength{\parindent}{0pt} % No indentation for paragraphs
+\usepackage{setspace}       % For line spacing
+\setstretch{1.2}            % Set line spacing to 1.2
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Mathematical packages
+\usepackage{amsmath}   % For mathematical symbols and equations
+\usepackage{amssymb}   % For additional mathematical symbols
+\usepackage{bm}        % For bold math symbols
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Graphics and diagrams
+\usepackage{tikz}   % For drawing diagrams
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Tables
+\usepackage{booktabs} % for \toprule \midrule \bottomrule
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Fonts
+\usepackage[T1]{fontenc}
+\usepackage{mlmodern}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Bibliography
+\usepackage[numbers]{natbib}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%hyperlinks
+\usepackage{hyperref}
+\hypersetup{colorlinks,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title
+\title{\large \textbf{A Compositional Autoencoder for Steady Flow past Objects
+in a Lid-Driven Cavity: Experiments and Diagnostics}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Author and affiliation
+\author[]{Suresh Murugaiyan}
+\affil[]{Translational AI Center, Iowa State University, Ames, IA}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\author[]{Hayden Garcia Chelstrom}
+\affil[]{Translational AI Center, Iowa State University, Ames, IA}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\author[]{Vienna Rossmanith}
+\affil[]{Translational AI Center, Iowa State University, Ames, IA}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\author[]{Baskar Ganapathysubramanian}
+\affil[]{Translational AI Center, Iowa State University, Ames, IA}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\date{July 8, 2026}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% chktex-file 17
+% chktex-file 9
+% chktex-file 8
+
 \date{July 2026}
 
 \begin{document}
@@ -232,7 +282,7 @@ exactly what the loss-ablation experiments below are designed to study.
 
 \subsection{Overview}
 
-Six training runs to date, each changing one ingredient at a time so
+Seven training runs to date, each changing one ingredient at a time so
 that any change in the outcome can be attributed to that ingredient.
 Table~\ref{tab:overview} summarizes the arc. In brief: the baseline
 (Run 1) puts the right information in the right blocks but also leaks Re
@@ -240,12 +290,15 @@ everywhere; making the statistical decorrelation penalty stronger (Runs
 2--3) trades quality for leakage without fixing the problem; the two
 \emph{structural} losses --- same-factor invariance (L10, Run 4) and swap
 consistency (L12, Run 5) --- deliver clean separation and clean
-recombination at matched conditions; and the cross-Re swap loss (Run 6)
-finally delivers \emph{transfer}: the ability to predict a geometry at a
-new Reynolds number, which every earlier model failed by two orders of
-magnitude. Run 6 is the current best configuration. The following
-subsections document each run in chronological order, each ending with
-the reasoning that led to the next run.
+recombination at matched conditions; the cross-Re swap loss (Run 6)
+delivers \emph{transfer}: the ability to predict a geometry at a new
+Reynolds number, which every earlier model failed by two orders of
+magnitude; and the static geometry encoder (Run 7) closes the remaining
+leak by computing $\boldsymbol{z}_{g}$ directly from the SDF, confirming
+the mechanism found by the concept-vector diagnostic. Run 7 is the
+current best configuration. The following subsections document each run
+in chronological order, each ending with the reasoning that led to the
+next run.
 
 \begin{table}[htbp]
   \centering
@@ -264,7 +317,8 @@ the reasoning that led to the next run.
     3 & $\lambda_{\mathrm{decorr}} = 0.1$  & 0.865 & ---  & --- & statistical penalty insufficient \\
     4 & $+$ invariance L10                 & \textbf{0.215} & 1.35 & 194 & separated, but brittle \\
     5 & $+$ swap L12                       & 0.343 & \textbf{1.04} & 199 & recombinable, no transfer \\
-    6 & $+$ cross-Re swap                  & 0.405 & 1.57 & \textbf{2.1} & \emph{transfer learned} \\
+    6 & $+$ cross-Re swap                  & 0.405 & 1.57 & 2.1 & \emph{transfer learned} \\
+    7 & $+$ static geometry encoder        & $\mathbf{-0.15}$ & 1.42 & \textbf{1.4} & mechanism confirmed; best overall \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -947,6 +1001,73 @@ inferring geometry from flow appearance. Testing that hypothesis --- for
 example by feeding the encoder the SDF alongside the flow, or by adding
 an encoder-side invariance term --- is a natural next experiment.
 
+\subsection{Run 7: a static geometry encoder --- the mechanism confirmed}
+
+Run 7 performs that test in the most decisive form, which is also the
+architecture the framework originally prescribes: $\boldsymbol{z}_{g}$
+is no longer inferred from the flow field at all, but computed by a
+dedicated \emph{static geometry encoder} --- a small CNN that reads the
+SDF directly. Because the SDF does not depend on the operating
+condition, $\boldsymbol{z}_{g}$ is Reynolds-invariant \emph{by
+construction}; the field encoder now produces only
+$\boldsymbol{z}_{\mu}$ and $\boldsymbol{z}_{\xi}$. All six losses and
+the group-structured batches are unchanged from Run 6.
+Table~\ref{tab:probes-run7} reports the probes.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Run 7: linear-probe $R^2$ with the static geometry encoder;
+  Run-6 values in parentheses. Bold marks the block that should carry
+  each target.}
+  \label{tab:probes-run7}
+  \begin{tabular}{lccc}
+    \toprule
+    Target & $\boldsymbol{z}_{\mu}$ & $\boldsymbol{z}_{g}$ & $\boldsymbol{z}_{\xi}$ \\
+    \midrule
+    $\log \mathrm{Re}$ & \textbf{0.959} (0.987) & $-0.153$ (0.405) & 0.692 (0.243) \\
+    Area fraction      & $-0.012$ (0.148)       & \textbf{0.976} (0.673) & 0.107 (0.328) \\
+    Centroid $x$       & $-0.010$ ($-0.011$)    & \textbf{0.930} (0.749) & $-0.009$ (0.165) \\
+    Centroid $y$       & $-0.001$ (0.013)       & \textbf{0.941} (0.696) & 0.028 (0.038) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Four predictions confirmed.} \emph{First}, the Re content of
+$\boldsymbol{z}_{g}$ is exactly zero ($R^2 = -0.15$, i.e.\ below
+chance), closing the leak that no loss could fully remove. \emph{Second},
+geometry recovery jumped from $\sim 0.7$ to $0.93$--$0.98$: reading the
+shape from the SDF beats inferring it from the flow by a wide margin.
+\emph{Third}, cross-Re transfer \emph{improved} ($2.0 \to 1.42$), now
+with a geometry code that is exactly shared across Re. \emph{Fourth},
+the concept-vector cross-talk from the Re direction into the geometry
+readouts --- $-0.37$/$+0.49$ in Run 6 --- is now exactly $0.000$:
+walking the regime code no longer moves the apparent geometry at all.
+Together these results confirm the flow-appearance mechanism: the
+residual leakage and the centroid cross-talk of Runs 4--6 were caused by
+the encoder having to infer geometry from Re-dependent flow structures,
+and disappear when geometry is read from the SDF instead. (For this
+architecture the geometry rows of the concept matrix are identically
+zero by construction --- the re-encode step pins $\boldsymbol{z}_{g}$ to
+the supplied SDF --- so only the Re row is diagnostic.)
+
+\paragraph{The one prediction that failed --- instructively.} The
+residual's Re content did not shrink; it \emph{grew}, from $0.243$ to
+$0.692$. This is a squeezed balloon: in Run 6 the flow-encoded
+$\boldsymbol{z}_{g}$ (32 dimensions) shared the burden of describing
+Re-dependent flow appearance; now the field encoder has only
+$\boldsymbol{z}_{\mu} + \boldsymbol{z}_{\xi}$ to describe the entire
+flow, so the residual necessarily correlates with Re. The crucial
+observation is that this does not matter functionally: transfer got
+\emph{better} even though $\boldsymbol{z}_{\xi}$ is more Re-readable
+than ever, and in the cross-Re swap the decoder still follows
+$\boldsymbol{z}_{\mu}$ (donor error $0.574$ versus target error
+$2.2 \times 10^{-3}$). The cross-Re training taught the decoder to
+\emph{ignore} the Re content in the residual. This is the third
+appearance of the document's central theme: what a block statistically
+\emph{contains} (probe readability) and what the decoder functionally
+\emph{uses} are different properties --- and the functional one is what
+matters for composition and transfer.
+
 \section{Status and next steps}
 
 \paragraph{Implemented and validated.} The block-structured autoencoder
@@ -971,21 +1092,31 @@ Concept-vector arithmetic (Table~\ref{tab:concept}) is also complete:
 the geometry directions act as clean edit handles (cross-talk
 $\le 0.11$), and the block-restricted variant traced the remaining
 Re-to-geometry cross-talk to the encoder inferring object position from
-Re-dependent flow structures --- a candidate explanation for the
-residual $\sim 0.3$ probe leakage.
+Re-dependent flow structures. That hypothesis was then confirmed
+decisively by Run 7 (Table~\ref{tab:probes-run7}): with a static
+geometry encoder reading the SDF, the $\boldsymbol{z}_{g}$ leak closes
+exactly, geometry recovery jumps to $0.93$--$0.98$, transfer improves to
+$1.42$, and the concept-vector cross-talk vanishes. Run 7 is the final
+architecture for this study.
 
 \paragraph{Planned increments, in order.}
 %
 \begin{itemize}
-  \item \textbf{Encoder-side invariance test}: feed the encoder the SDF
-        alongside the flow (or add an encoder invariance term) to test
-        whether the remaining Re-to-geometry cross-talk and the
-        $\sim 0.3$ probe leakage share the flow-appearance mechanism
-        identified by the concept-vector diagnostic.
+  \item \textbf{Figures}: field visualizations for the paper ---
+        reconstruction examples (truth vs.\ prediction vs.\ error) and,
+        above all, the cross-Re transfer figure: a decoded
+        geometry-at-new-Re next to the CFD ground truth.
+  \item \textbf{FlowBench baseline comparison}: one table comparing our
+        reconstruction error against the published FlowBench neural
+        operator baselines (success criterion 1 of the project plan).
+  \item \textbf{Multi-seed for Run 7} (two more seeds) to put error bars
+        on the new architecture's numbers.
+  \item \textbf{Physics/spectral loss family}: PDE residual (L18) and/or
+        spectrum matching (L22), the one loss family not yet ablated.
   \item \textbf{Residual capacity}: shrink the residual block (e.g.\
-        $16 \to 4$ dimensions) --- a steady, deterministic dataset needs
-        little residual capacity, and less room may squeeze out the Re
-        content remaining in $\boldsymbol{z}_{\xi}$ ($R^2 \approx 0.2$).
+        $16 \to 4$ dimensions). In Run 7 the residual is Re-readable
+        ($R^2 \approx 0.69$) but functionally inert; a smaller block
+        would test whether the readability is even necessary.
   \item \textbf{Loss library extensions}: HSIC (L7), which detects
         nonlinear dependence between blocks, not just linear correlation;
         boundary-layer weighted reconstruction (L3), which weights errors
