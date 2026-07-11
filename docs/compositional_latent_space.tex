@@ -519,17 +519,63 @@ probe separation. The combination --- blocks that are both separated
 losses; neither the probe matrix nor the swap ratio alone certifies it.
 Run 5 is the best configuration overall.
 
-\paragraph{Cross-Re swap.} The same-Re swap is a consistency test, but a
-weak one when regime supervision makes $\boldsymbol{z}_{\mu}$ nearly
-deterministic in Re. The diagnostic suite therefore now also includes a
-\emph{cross-Re} swap: take $\boldsymbol{z}_{\mu}$ from a sample at
-$\mathrm{Re}_i$ and $\boldsymbol{z}_{g}, \boldsymbol{z}_{\xi}$ from a
-different geometry observed at a different Re, decode, and compare
-against the true field of that geometry at $\mathrm{Re}_i$ (present in
-the dataset). This is genuine \emph{transfer} --- using the regime code
-to move a geometry to a new operating point --- and cannot be passed by
-Re-determinism of $\boldsymbol{z}_{\mu}$. Cross-Re ratios for the three
-checkpoints are the next measurement.
+\subsection{Cross-Re swap: the transfer test fails --- for every model}
+
+The same-Re swap is a consistency test, but a weak one when regime
+supervision makes $\boldsymbol{z}_{\mu}$ nearly deterministic in Re. The
+demanding test is the \emph{cross-Re} swap: take $\boldsymbol{z}_{\mu}$
+from a sample at $\mathrm{Re}_i$ and $\boldsymbol{z}_{g},
+\boldsymbol{z}_{\xi}$ from a different geometry observed at a different
+Re, decode, and compare against the true field of that geometry at
+$\mathrm{Re}_i$ (present in the dataset). This is genuine
+\emph{transfer} --- using the regime code to move a geometry to a new
+operating point. Table~\ref{tab:xswap} reports the measurement on the
+three stored checkpoints.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Same-Re vs.\ cross-Re swap ratios (swap error relative to
+  reconstruction error, 256 pairs, test split).}
+  \label{tab:xswap}
+  \begin{tabular}{lccc}
+    \toprule
+    Run & Losses & Same-Re ratio & Cross-Re ratio \\
+    \midrule
+    Run 1 & baseline            & 1.06 & 260 \\
+    Run 4 & $+$ L10             & 1.35 & 194 \\
+    Run 5 & $+$ L10 $+$ L12     & 1.04 & 199 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Outcome: falsified.} Every model fails the transfer test
+catastrophically --- cross-Re swap errors are two orders of magnitude
+above reconstruction error, barely improved by the structural losses.
+The blocks are separated (probes) and consistently interchangeable at
+matched conditions (same-Re swap), but the decoder cannot \emph{compose}
+a regime code with a geometry pair it never saw in that combination:
+strong compositionality, in the transfer sense the framework ultimately
+targets, does not emerge from separation and same-Re consistency alone.
+This is the diagnostic doing its job --- a falsifiable prediction,
+falsified --- and it sharpens the mechanism question: since
+$\boldsymbol{z}_{\xi}$ still carries Re ($R^2 \approx 0.36$) and is
+taken from the donor geometry at the \emph{wrong} Re, the decoder may be
+reading the operating point from the residual rather than from
+$\boldsymbol{z}_{\mu}$. The diagnostic now also reports the swapped
+output's error against the donor's own field to test exactly this.
+
+\paragraph{Run 6: cross-Re swap as a training loss.} The dataset
+contains the required cross-combinations, so the transfer demand can be
+trained directly: for in-batch triples $(i, k, m)$ with $\mathrm{re}_m =
+\mathrm{re}_i$, $\mathrm{geo}_m = \mathrm{geo}_k \ne \mathrm{geo}_i$ and
+$\mathrm{re}_k \ne \mathrm{re}_i$, decoding $[\boldsymbol{z}_{\mu}^{(i)}
+\,\|\, \boldsymbol{z}_{g}^{(k)} \,\|\, \boldsymbol{z}_{\xi}^{(k)}]$ must
+reproduce sample $m$ --- geometry $k$ moved to operating point
+$\mathrm{Re}_i$. This forces the decoder to take the operating point
+from $\boldsymbol{z}_{\mu}$ and to treat $(\boldsymbol{z}_{g},
+\boldsymbol{z}_{\xi})$ as Re-free, attacking the residual leakage as a
+side effect. Run 6 adds this term ($\lambda_{\mathrm{xswap}} = 0.1$) to
+the Run-5 configuration.
 
 \section{Status and next steps}
 

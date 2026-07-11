@@ -103,8 +103,10 @@ def cross_re_swap_error(model, dataset, max_pairs=256, batch_size=16, seed=0):
 @torch.no_grad()
 def _paired_decode_error(model, dataset, idx_i, idx_k, idx_m, batch_size):
     """Decode [z_mu(i) || z_g(k) || z_xi(k)] and compare against sample m's
-    truth; also compute m's ordinary reconstruction error for reference."""
-    swap_sum, recon_sum, n = 0.0, 0.0, 0
+    truth; also compute m's ordinary reconstruction error, and the error
+    against the donor k's field (if the swapped output matches k rather than
+    m, the decoder is reading Re from z_g/z_xi instead of z_mu)."""
+    swap_sum, recon_sum, donor_sum, n = 0.0, 0.0, 0.0, 0
     for b in range(0, idx_i.numel(), batch_size):
         bi, bk, bm = idx_i[b:b + batch_size], idx_k[b:b + batch_size], idx_m[b:b + batch_size]
         z_mu_i, _, _ = model.encode(dataset.fields[bi])
@@ -118,8 +120,10 @@ def _paired_decode_error(model, dataset, idx_i, idx_k, idx_m, batch_size):
         cnt = len(bi)
         swap_sum += model.masked_recon_loss(recon_swap, fields_m, mask_m).item() * cnt
         recon_sum += model.masked_recon_loss(recon_self, fields_m, mask_m).item() * cnt
+        donor_sum += model.masked_recon_loss(recon_swap, dataset.fields[bk],
+                                             dataset.mask[bk]).item() * cnt
         n += cnt
-    return swap_sum / n, recon_sum / n, n
+    return swap_sum / n, recon_sum / n, donor_sum / n, n
 
 
 def main(config_path, checkpoint_path, split='test'):
@@ -170,11 +174,16 @@ def main(config_path, checkpoint_path, split='test'):
         result = fn(model, dataset)
         if result is None:
             print(f'\n{name}: no eligible pairs in this split.')
-        else:
-            swap_mse, recon_mse, n_pairs = result
-            print(f'\n{name} error ({n_pairs} pairs): '
-                  f'swap={swap_mse:.3e}  recon={recon_mse:.3e}  '
-                  f'ratio={swap_mse / max(recon_mse, 1e-12):.2f}')
+            continue
+        swap_mse, recon_mse, donor_mse, n_pairs = result
+        print(f'\n{name} error ({n_pairs} pairs): '
+              f'swap={swap_mse:.3e}  recon={recon_mse:.3e}  '
+              f'ratio={swap_mse / max(recon_mse, 1e-12):.2f}')
+        if name == 'Cross-Re swap':
+            print(f'  swapped output vs DONOR field (geometry k at its own Re): '
+                  f'{donor_mse:.3e}')
+            print('  (donor error << target error means the decoder reads Re '
+                  'from z_g/z_xi, ignoring z_mu)')
     print('(ratio near 1 = blocks recombine cleanly through the decoder; '
           'cross-Re is the demanding transfer test)')
 

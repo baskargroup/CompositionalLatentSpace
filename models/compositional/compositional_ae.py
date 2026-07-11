@@ -51,7 +51,8 @@ class CompositionalAE(pl.LightningModule):
     def __init__(self, in_channels=3, resolution=256, base_channels=32,
                  latent_mu=4, latent_g=32, latent_xi=16, sdf_resolution=64,
                  lambda_recon=1.0, lambda_regime=0.1, lambda_geo=0.1,
-                 lambda_decorr=0.01, lambda_inv=0.0, lambda_swap=0.0, lr=1e-3):
+                 lambda_decorr=0.01, lambda_inv=0.0, lambda_swap=0.0,
+                 lambda_xswap=0.0, lr=1e-3):
         super().__init__()
         self.save_hyperparameters()
 
@@ -104,6 +105,37 @@ class CompositionalAE(pl.LightningModule):
                                       batch['mask'][idx_k])
         return loss, idx_i.numel()
 
+    def cross_swap_consistency(self, z_mu, z_g, z_xi, batch):
+        """Cross-Re swap (training form of the transfer test): for in-batch
+        triples (i, k, m) with re_m == re_i, geo_m == geo_k != geo_i and
+        re_k != re_i, decoding [z_mu from i || z_g, z_xi from k] must
+        reproduce sample m — geometry k moved to operating point Re_i. This
+        forces the decoder to take Re from z_mu and treat (z_g, z_xi) as
+        Re-free. Returns (loss, number_of_triples)."""
+        re, gid = batch['re'], batch['geo_id']
+        n = re.shape[0]
+        same_re = re.view(-1, 1) == re.view(1, -1)
+        diff_geo = gid.view(-1, 1) != gid.view(1, -1)
+        pair_i, pair_m = torch.nonzero(same_re & diff_geo, as_tuple=True)
+        idx_i, idx_k, idx_m = [], [], []
+        for i, m in zip(pair_i.tolist(), pair_m.tolist()):
+            cand = torch.nonzero((gid == gid[m]) & (re != re[i])).flatten()
+            if cand.numel():
+                k = cand[torch.randint(cand.numel(), (1,))].item()
+                idx_i.append(i); idx_k.append(k); idx_m.append(m)
+        if not idx_i:
+            return z_mu.new_zeros(()), 0
+        if len(idx_i) > n:  # cap decode cost at one extra batch
+            keep = torch.randperm(len(idx_i))[:n].tolist()
+            idx_i = [idx_i[j] for j in keep]
+            idx_k = [idx_k[j] for j in keep]
+            idx_m = [idx_m[j] for j in keep]
+        z_swap = torch.cat([z_mu[idx_i], z_g[idx_k], z_xi[idx_k]], dim=1)
+        recon = self.decoder(z_swap)
+        loss = self.masked_recon_loss(recon, batch['fields'][idx_m],
+                                      batch['mask'][idx_m])
+        return loss, len(idx_i)
+
     def _losses(self, batch):
         fields, mask = batch['fields'], batch['mask']
         recon, (z_mu, z_g, z_xi) = self(fields)
@@ -129,12 +161,20 @@ class CompositionalAE(pl.LightningModule):
         else:
             loss_swap, n_pairs = loss_recon.new_zeros(()), 0
 
+        # cross-Re swap: z_mu must transfer a geometry to a new operating point
+        if h.lambda_xswap > 0:
+            loss_xswap, n_triples = self.cross_swap_consistency(z_mu, z_g, z_xi, batch)
+        else:
+            loss_xswap, n_triples = loss_recon.new_zeros(()), 0
+
         total = (h.lambda_recon * loss_recon + h.lambda_regime * loss_regime
                  + h.lambda_geo * loss_geo + h.lambda_decorr * loss_decorr
-                 + h.lambda_inv * loss_inv + h.lambda_swap * loss_swap)
+                 + h.lambda_inv * loss_inv + h.lambda_swap * loss_swap
+                 + h.lambda_xswap * loss_xswap)
         return total, {'recon': loss_recon, 'regime': loss_regime,
                        'geo': loss_geo, 'decorr': loss_decorr, 'inv': loss_inv,
-                       'swap': loss_swap, 'swap_pairs': float(n_pairs)}
+                       'swap': loss_swap, 'swap_pairs': float(n_pairs),
+                       'xswap': loss_xswap, 'xswap_triples': float(n_triples)}
 
     def training_step(self, batch, batch_idx):
         total, parts = self._losses(batch)
