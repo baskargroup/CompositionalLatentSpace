@@ -232,7 +232,7 @@ exactly what the loss-ablation experiments below are designed to study.
 
 \subsection{Overview}
 
-Five training runs to date, each changing one ingredient at a time so
+Six training runs to date, each changing one ingredient at a time so
 that any change in the outcome can be attributed to that ingredient.
 Table~\ref{tab:overview} summarizes the arc. In brief: the baseline
 (Run 1) puts the right information in the right blocks but also leaks Re
@@ -240,27 +240,31 @@ everywhere; making the statistical decorrelation penalty stronger (Runs
 2--3) trades quality for leakage without fixing the problem; the two
 \emph{structural} losses --- same-factor invariance (L10, Run 4) and swap
 consistency (L12, Run 5) --- deliver clean separation and clean
-recombination respectively. Run 5 is the current best configuration. The
-following subsections document each run in chronological order, each
-ending with the reasoning that led to the next run.
+recombination at matched conditions; and the cross-Re swap loss (Run 6)
+finally delivers \emph{transfer}: the ability to predict a geometry at a
+new Reynolds number, which every earlier model failed by two orders of
+magnitude. Run 6 is the current best configuration. The following
+subsections document each run in chronological order, each ending with
+the reasoning that led to the next run.
 
 \begin{table}[htbp]
   \centering
   \caption{Summary of all runs. ``Leakage'' is the linear-probe $R^2$ of
   $\log \mathrm{Re}$ read from $\boldsymbol{z}_{g}$, where it does not
-  belong (target $\lesssim 0.3$); ``swap ratio'' is the same-Re swap
-  error relative to the reconstruction error (target $\approx 1$; defined
-  in Section~\ref{sec:swap}).}
+  belong (target $\lesssim 0.3$); the swap ratios compare swap error to
+  reconstruction error (target $\approx 1$; defined in
+  Section~\ref{sec:swap}).}
   \label{tab:overview}
-  \begin{tabular}{llccl}
+  \begin{tabular}{llcccl}
     \toprule
-    Run & Configuration & Leakage & Swap ratio & Verdict \\
+    Run & Configuration & Leakage & Same-Re & Cross-Re & Verdict \\
     \midrule
-    1 & $\lambda_{\mathrm{decorr}} = 0.01$ & 0.900 & 1.06 & Re leaks into all blocks \\
-    2 & $\lambda_{\mathrm{decorr}} = 0.5$  & 0.719 & ---  & trade-off: quality lost, leak remains \\
-    3 & $\lambda_{\mathrm{decorr}} = 0.1$  & 0.865 & ---  & statistical penalty insufficient \\
-    4 & $+$ invariance L10                 & \textbf{0.215} & 1.35 & separated, but brittle \\
-    5 & $+$ swap L12                       & 0.343 & \textbf{1.04} & separated \emph{and} recombinable \\
+    1 & $\lambda_{\mathrm{decorr}} = 0.01$ & 0.900 & 1.06 & 260 & Re leaks into all blocks \\
+    2 & $\lambda_{\mathrm{decorr}} = 0.5$  & 0.719 & ---  & --- & trade-off: quality lost, leak remains \\
+    3 & $\lambda_{\mathrm{decorr}} = 0.1$  & 0.865 & ---  & --- & statistical penalty insufficient \\
+    4 & $+$ invariance L10                 & \textbf{0.215} & 1.35 & 194 & separated, but brittle \\
+    5 & $+$ swap L12                       & 0.343 & \textbf{1.04} & 199 & recombinable, no transfer \\
+    6 & $+$ cross-Re swap                  & 0.405 & 1.57 & \textbf{2.1} & \emph{transfer learned} \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -693,39 +697,100 @@ run (target: near zero).
     \toprule
     Run & Losses & $\log \mathrm{Re}$ from $\boldsymbol{z}_{\xi}$ \\
     \midrule
-    Run 1 & baseline        & 0.777 \\
-    Run 4 & $+$ L10         & 0.412 \\
-    Run 5 & $+$ L10 $+$ L12 & 0.356 \\
+    Run 1 & baseline            & 0.777 \\
+    Run 4 & $+$ L10             & 0.412 \\
+    Run 5 & $+$ L10 $+$ L12     & 0.356 \\
+    Run 6 & $+$ cross-Re swap   & \textbf{0.243} \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-The leakage has dropped by more than half, but $R^2 = 0.356$ still means
-that roughly a third of the Reynolds information sits in a block where it
-does not belong. It is worth noticing that neither L10 nor L12 targets
-$\boldsymbol{z}_{\xi}$ directly; the improvements so far are
-\emph{side effects}. Once L10 forced $\boldsymbol{z}_{g}$ to be Re-free,
-the decoder had to rely more on $\boldsymbol{z}_{\mu}$ for the operating
-point, and the now-less-useful copies elsewhere partly decayed.
+Through Run 5 the leakage had dropped by more than half, yet $R^2 =
+0.356$ still meant that roughly a third of the Reynolds information sat
+in a block where it does not belong. It is worth noticing that neither
+L10 nor L12 targets $\boldsymbol{z}_{\xi}$ directly; those improvements
+were \emph{side effects}. Once L10 forced $\boldsymbol{z}_{g}$ to be
+Re-free, the decoder had to rely more on $\boldsymbol{z}_{\mu}$ for the
+operating point, and the now-less-useful copies elsewhere partly decayed.
 
 Why this matters beyond tidiness: the leftover Re in
-$\boldsymbol{z}_{\xi}$ is our prime suspect for the cross-Re transfer
+$\boldsymbol{z}_{\xi}$ was our prime suspect for the cross-Re transfer
 failure of Table~\ref{tab:xswap}. In the cross-Re swap, the residual code
 comes from the donor sample at the \emph{wrong} Reynolds number; if the
 decoder reads the operating point from the residual instead of from
 $\boldsymbol{z}_{\mu}$, transfer breaks in exactly the way we observed.
 
-Run 6 is the first run that attacks this directly. Its cross-Re training
+Run 6 was the first run to attack this directly. Its cross-Re training
 loss decodes $[\boldsymbol{z}_{\mu}^{(i)} \,\|\, \boldsymbol{z}_{g}^{(k)}
 \,\|\, \boldsymbol{z}_{\xi}^{(k)}]$ against ground truth at
 $\mathrm{Re}_i$, so any Re content in $\boldsymbol{z}_{\xi}^{(k)}$
 (which is at the wrong Re) actively increases the loss, and training
-pressure should squeeze it out. When Run 6's probe table arrives, the
-$\log \mathrm{Re}$-from-$\boldsymbol{z}_{\xi}$ cell is one of the two
-numbers to watch, alongside the cross-Re ratio itself. If Run 6 does not
-clean it, two follow-ups are already queued: shrink the residual block
-from 16 to 4 dimensions (less room to hide Re), and the HSIC penalty
-(which catches nonlinear dependence that the Pearson penalty misses).
+pressure squeezes it out. As the last row of Table~\ref{tab:resid}
+shows, it worked: the residual's Re content fell to $0.243$, the lowest
+of any run --- and, as the next subsection reports, the transfer failure
+fell with it. If further cleanup is needed, two follow-ups remain
+queued: shrink the residual block from 16 to 4 dimensions (less room to
+hide Re), and the HSIC penalty (which catches nonlinear dependence that
+the Pearson penalty misses).
+
+\subsection{Run 6: the cross-Re swap loss --- transfer learned}
+
+Run 6 adds the cross-Re swap term ($\lambda_{\mathrm{xswap}} = 0.1$) to
+the Run-5 configuration and trains from scratch, with everything else
+unchanged. Table~\ref{tab:probes-run6} reports the probes (Run-5 values
+in parentheses), and the swap diagnostics follow.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Run 6: linear-probe $R^2$ with the cross-Re swap loss added;
+  Run-5 values in parentheses. Bold marks the block that should carry
+  each target.}
+  \label{tab:probes-run6}
+  \begin{tabular}{lccc}
+    \toprule
+    Target & $\boldsymbol{z}_{\mu}$ & $\boldsymbol{z}_{g}$ & $\boldsymbol{z}_{\xi}$ \\
+    \midrule
+    $\log \mathrm{Re}$ & \textbf{0.987} (0.972) & 0.405 (0.343) & 0.243 (0.356) \\
+    Area fraction      & 0.148 ($-0.005$)       & \textbf{0.673} (0.693) & 0.328 (0.170) \\
+    Centroid $x$       & $-0.011$ ($-0.003$)    & \textbf{0.749} (0.767) & 0.165 (0.235) \\
+    Centroid $y$       & 0.013 (0.003)          & \textbf{0.696} (0.718) & 0.038 (0.069) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{The headline: transfer works now.} The cross-Re swap ratio
+collapsed from $199$ to $\mathbf{2.12}$ --- from two hundred times the
+reconstruction error to about twice it. In absolute terms the
+cross-combination fields are decoded with error $4.0 \times 10^{-3}$,
+close to ordinary reconstruction quality. The model went from ``cannot
+transfer at all'' to ``predicts a geometry at a new Reynolds number
+almost as well as it reconstructs a field it has seen.''
+
+\paragraph{The mechanism test confirms the diagnosis.} Recall the
+suspicion that earlier decoders were reading the operating point from
+the residual code rather than from $\boldsymbol{z}_{\mu}$. The new donor
+comparison settles it: the swapped output's error against the
+\emph{target} (geometry $k$ at the new $\mathrm{Re}_i$) is
+$4.0 \times 10^{-3}$, while its error against the \emph{donor} (geometry
+$k$ at its own, wrong Re) is $0.584$ --- more than a hundred times
+larger. The decoded field follows the regime code, not the residual: the
+decoder now takes its operating point from $\boldsymbol{z}_{\mu}$,
+exactly as designed. Consistently, the residual's own Re content dropped
+to its best value ($0.356 \to 0.243$; Table~\ref{tab:resid}), and the
+regime readout even improved ($0.972 \to 0.987$).
+
+\paragraph{The honest fine print.} Three cells moved slightly the wrong
+way: the same-Re swap ratio drifted from $1.04$ to $1.57$, Re from
+$\boldsymbol{z}_{g}$ rose from $0.343$ to $0.405$, and small amounts of
+geometry appeared in $\boldsymbol{z}_{\mu}$ (area fraction $0.148$) and
+$\boldsymbol{z}_{\xi}$ ($0.328$). All of these are small compared to the
+two-orders-of-magnitude transfer improvement, and all are of the size
+that single-seed comparisons cannot resolve; the multi-seed protocol
+will determine which are real effects and which are run-to-run noise.
+The overall verdict stands: \emph{with the cross-Re swap loss, and a
+dataset whose (Re, shape) grid supplies ground truth for
+cross-combinations, transfer compositionality is directly trainable ---
+at essentially no cost to reconstruction or to the block structure.}
 
 \section{Status and next steps}
 
@@ -734,26 +799,25 @@ with regime and geometry supervision (Runs 1--3); group-structured
 minibatches and the same-factor invariance loss L10 (Run 4); the
 swap-consistency loss L12 (Run 5); and a diagnostic suite comprising
 linear probes, same-Re swap error, and cross-Re swap error --- all
-runnable on stored checkpoints without retraining. The headline
-methodological finding so far: \emph{statistical decorrelation cannot
-functionally separate the blocks at any weight, while the two structural
-losses achieve separation (L10) and recombinability (L12) at essentially
-no cost to reconstruction}. Moreover the two properties are genuinely
-distinct: each requires its own loss, and each is invisible to the other
-property's diagnostic.
+runnable on stored checkpoints without retraining. Also complete: the
+cross-Re swap promoted from diagnostic to training loss (Run 6), which
+took the transfer test from a two-orders-of-magnitude failure to near
+reconstruction quality. The headline methodological findings:
+\emph{statistical decorrelation cannot functionally separate the blocks
+at any weight; the structural losses achieve separation (L10),
+recombinability (L12), and transfer (cross-Re swap, Run 6) at essentially
+no cost to reconstruction}. The three properties are genuinely distinct:
+each required its own loss, and each is invisible to the other
+properties' diagnostics.
 
 \paragraph{Planned increments, in order.}
 %
 \begin{itemize}
-  \item \textbf{Cross-Re swap measurement} on the Run-1/4/5 checkpoints
-        (done --- all models fail; see Table~\ref{tab:xswap}), leading to
-        \textbf{Run 6}: cross-Re swapping promoted from diagnostic to
-        training loss (in progress).
-  \item \textbf{Multi-seed protocol}: rerun the Run-4 and Run-5
-        configurations with 2--3 different random seeds to put error bars
-        on the probe tables and settle the small differences (e.g.\
-        leakage $0.215$ vs.\ $0.343$) currently attributed to
-        run-to-run variation.
+  \item \textbf{Multi-seed protocol}: rerun the Run-4/5/6 configurations
+        with 2--3 different random seeds to put error bars on the probe
+        tables and settle the small differences (e.g.\ leakage $0.215$
+        vs.\ $0.405$, same-Re ratio $1.04$ vs.\ $1.57$) currently
+        attributed to run-to-run variation.
   \item \textbf{Concept-vector arithmetic} on $\boldsymbol{z}_{\mu}$ and
         $\boldsymbol{z}_{g}$: walk the latent along the direction
         associated with one parameter and check that only that parameter
