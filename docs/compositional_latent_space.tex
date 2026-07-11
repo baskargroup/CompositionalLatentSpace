@@ -792,6 +792,70 @@ dataset whose (Re, shape) grid supplies ground truth for
 cross-combinations, transfer compositionality is directly trainable ---
 at essentially no cost to reconstruction or to the block structure.}
 
+\subsection{Multi-seed results: what is robust and what was noise}
+
+Every result above came from a single training run per configuration.
+Neural-network training is stochastic --- the random initialization of
+the weights changes the outcome --- so small differences between two
+runs may be luck rather than effect. To separate the two, the Run-4,
+Run-5, and Run-6 configurations were each retrained with three different
+random seeds, and every metric is reported as mean $\pm$ standard
+deviation across the three seeds (Table~\ref{tab:multiseed}).
+
+\begin{table}[htbp]
+  \centering
+  \caption{Multi-seed results: mean $\pm$ standard deviation over three
+  random seeds per configuration. Bold marks the best value in each row.}
+  \label{tab:multiseed}
+  \begin{tabular}{lccc}
+    \toprule
+    Metric & Run 4 (L10) & Run 5 ($+$L12) & Run 6 ($+$cross-Re) \\
+    \midrule
+    $\log \mathrm{Re}$ from $\boldsymbol{z}_{\mu}$ (want high)
+      & $0.946 \pm 0.029$ & $0.930 \pm 0.042$ & $\mathbf{0.984 \pm 0.002}$ \\
+    $\log \mathrm{Re}$ from $\boldsymbol{z}_{g}$ (want low)
+      & $0.284 \pm 0.052$ & $0.315 \pm 0.084$ & $0.376 \pm 0.074$ \\
+    $\log \mathrm{Re}$ from $\boldsymbol{z}_{\xi}$ (want low)
+      & $0.247 \pm 0.128$ & $0.307 \pm 0.130$ & $\mathbf{0.200 \pm 0.041}$ \\
+    Same-Re swap ratio (want $\approx 1$)
+      & $1.36 \pm 0.23$ & $\mathbf{1.04 \pm 0.03}$ & $1.50 \pm 0.05$ \\
+    Cross-Re swap ratio (want $\approx 1$)
+      & $171 \pm 66$ & $163 \pm 73$ & $\mathbf{2.0 \pm 0.1}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{What survives with error bars.} Four conclusions are now
+statistically solid. \emph{First}, the transfer result is rock-solid:
+Run 6 achieves a cross-Re ratio of $2.0 \pm 0.1$ in every seed, while
+Runs 4 and 5 fail by factors of $60$--$240$ in every seed --- the
+distributions do not remotely overlap. \emph{Second}, L12's effect on
+same-Re recombinability is real, not noise: Run 5 sits at
+$1.04 \pm 0.03$ (remarkably tight) versus Run 4's noisy
+$1.36 \pm 0.23$. \emph{Third}, Run 6's same-Re cost is also real
+($1.50 \pm 0.05$, consistent across seeds): the cross-Re loss trades a
+little same-Re polish for transfer. \emph{Fourth}, Run 6 is the most
+\emph{stable} configuration --- its regime readout ($0.984 \pm 0.002$)
+varies ten times less across seeds than Runs 4--5, and its residual
+block is the cleanest.
+
+\paragraph{What was noise.} The $\boldsymbol{z}_{g}$ leakage differences
+that earlier subsections cautiously flagged ($0.215$ vs.\ $0.343$ vs.\
+$0.405$) are indeed within run-to-run variation: all three
+configurations overlap around $0.28$--$0.38$, and Run 4's celebrated
+seed-0 value of $0.215$ was partly luck. The honest multi-seed claim is
+that the structural losses hold the leakage near $\sim 0.3$ (against the
+$0.900$ baseline), with no significant difference among Runs 4--6.
+
+\paragraph{The mechanism evidence also generalizes.} Across the Run-4/5
+seeds, the cross-Re swapped output often lay \emph{closer to the donor's
+field than to the target's} (donor error $0.07$--$0.08$ versus target
+error $0.38$--$0.40$) --- direct proof that those decoders read the
+operating point from $\boldsymbol{z}_{g}$ or $\boldsymbol{z}_{\xi}$. In
+every Run-6 seed the relationship is reversed (donor $\approx 0.58$,
+target $\approx 0.003$): the decoder follows $\boldsymbol{z}_{\mu}$,
+exactly as designed.
+
 \section{Status and next steps}
 
 \paragraph{Implemented and validated.} The block-structured autoencoder
@@ -802,22 +866,19 @@ linear probes, same-Re swap error, and cross-Re swap error --- all
 runnable on stored checkpoints without retraining. Also complete: the
 cross-Re swap promoted from diagnostic to training loss (Run 6), which
 took the transfer test from a two-orders-of-magnitude failure to near
-reconstruction quality. The headline methodological findings:
-\emph{statistical decorrelation cannot functionally separate the blocks
-at any weight; the structural losses achieve separation (L10),
-recombinability (L12), and transfer (cross-Re swap, Run 6) at essentially
-no cost to reconstruction}. The three properties are genuinely distinct:
-each required its own loss, and each is invisible to the other
-properties' diagnostics.
+reconstruction quality. The multi-seed protocol (three seeds per
+configuration, Table~\ref{tab:multiseed}) is also complete and confirms
+the headline findings with error bars: \emph{statistical decorrelation
+cannot functionally separate the blocks at any weight; the structural
+losses achieve separation (L10), recombinability (L12, $1.04 \pm 0.03$),
+and transfer (cross-Re swap, $2.0 \pm 0.1$ versus $\sim\!170$ without
+it) at essentially no cost to reconstruction}. The three properties are
+genuinely distinct: each required its own loss, and each is invisible to
+the other properties' diagnostics.
 
 \paragraph{Planned increments, in order.}
 %
 \begin{itemize}
-  \item \textbf{Multi-seed protocol}: rerun the Run-4/5/6 configurations
-        with 2--3 different random seeds to put error bars on the probe
-        tables and settle the small differences (e.g.\ leakage $0.215$
-        vs.\ $0.405$, same-Re ratio $1.04$ vs.\ $1.57$) currently
-        attributed to run-to-run variation.
   \item \textbf{Concept-vector arithmetic} on $\boldsymbol{z}_{\mu}$ and
         $\boldsymbol{z}_{g}$: walk the latent along the direction
         associated with one parameter and check that only that parameter
