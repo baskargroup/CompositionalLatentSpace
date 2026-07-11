@@ -23,9 +23,11 @@ def set_seed(seed):
     pl.seed_everything(seed)
 
 
-def main(config_path):
+def main(config_path, seed=None):
     torch.set_float32_matmul_precision('high')
     config = OmegaConf.load(config_path)
+    if seed is not None:
+        config.trainer.seed = seed
     set_seed(config.trainer.seed)
 
     train_dataset = CompositionalLDCDataset(
@@ -112,5 +114,7 @@ def main(config_path):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train the compositional autoencoder.')
     parser.add_argument('--config', type=str, default='configs/compositional/conf.yaml')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='override trainer.seed from the config')
     args = parser.parse_args()
-    main(args.config)
+    main(args.config, seed=args.seed)

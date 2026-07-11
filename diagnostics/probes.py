@@ -170,16 +170,19 @@ def main(config_path, checkpoint_path, split='test'):
     print('\nExpected pattern: log_re high from z_mu only; '
           'geometry targets high from z_g only.')
 
-    for name, fn in [('Same-Re swap', swap_error), ('Cross-Re swap', cross_re_swap_error)]:
+    swap_metrics = {}
+    for name, fn in [('same_re', swap_error), ('cross_re', cross_re_swap_error)]:
         result = fn(model, dataset)
         if result is None:
-            print(f'\n{name}: no eligible pairs in this split.')
+            print(f'\n{name} swap: no eligible pairs in this split.')
             continue
         swap_mse, recon_mse, donor_mse, n_pairs = result
-        print(f'\n{name} error ({n_pairs} pairs): '
-              f'swap={swap_mse:.3e}  recon={recon_mse:.3e}  '
-              f'ratio={swap_mse / max(recon_mse, 1e-12):.2f}')
-        if name == 'Cross-Re swap':
+        ratio = swap_mse / max(recon_mse, 1e-12)
+        swap_metrics[f'{name}_swap_ratio'] = ratio
+        print(f'\n{name} swap error ({n_pairs} pairs): '
+              f'swap={swap_mse:.3e}  recon={recon_mse:.3e}  ratio={ratio:.2f}')
+        if name == 'cross_re':
+            swap_metrics['cross_re_donor_mse'] = donor_mse
             print(f'  swapped output vs DONOR field (geometry k at its own Re): '
                   f'{donor_mse:.3e}')
             print('  (donor error << target error means the decoder reads Re '
@@ -193,6 +196,8 @@ def main(config_path, checkpoint_path, split='test'):
         f.write('target,' + ','.join(blocks) + '\n')
         for row in rows:
             f.write(row[0] + ',' + ','.join(f'{v:.6f}' for v in row[1:]) + '\n')
+        for key, value in swap_metrics.items():
+            f.write(f'{key},{value:.6f},,\n')
     print(f'Saved: {out_path}')
 
 
