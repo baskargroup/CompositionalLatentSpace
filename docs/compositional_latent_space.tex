@@ -158,6 +158,68 @@ geometry block, and vice versa. A high $R^2$ in an off-diagonal cell means
 information leaked --- exactly what the planned loss ablations are designed
 to study (e.g., does removing the decorrelation penalty cause leakage?).
 
+\section{Results}
+
+\subsection{Run 1: baseline loss weights}
+
+First training run on the FlowBench LDC ``easy'' split (2{,}400 train /
+600 test samples): 200 epochs, batch size 16, resolution $256^2$, loss
+weights $\lambda_{\mathrm{recon}} = 1.0$, $\lambda_{\mathrm{regime}} =
+\lambda_{\mathrm{geo}} = 0.1$, $\lambda_{\mathrm{decorr}} = 0.01$
+(single NVIDIA GPU, $\sim$18 minutes). Final masked reconstruction error:
+train $2.7 \times 10^{-3}$, validation $2.1 \times 10^{-3}$, with no sign
+of overfitting. Table~\ref{tab:probes-run1} reports the measured
+linear-probe $R^2$.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Run 1: measured linear-probe $R^2$ on the 600-sample test split
+  ($\lambda_{\mathrm{decorr}} = 0.01$). Bold marks the block that should
+  carry each target.}
+  \label{tab:probes-run1}
+  \begin{tabular}{lccc}
+    \toprule
+    Target & $\boldsymbol{z}_{\mu}$ & $\boldsymbol{z}_{g}$ & $\boldsymbol{z}_{\xi}$ \\
+    \midrule
+    $\log \mathrm{Re}$    & \textbf{0.994} & 0.900          & 0.777 \\
+    Area fraction         & 0.042          & \textbf{0.688} & 0.172 \\
+    Centroid $x$          & 0.027          & \textbf{0.736} & 0.373 \\
+    Centroid $y$          & $-0.013$       & \textbf{0.690} & 0.214 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{What worked.} The regime block is clean:
+$\boldsymbol{z}_{\mu}$ reads $\log \mathrm{Re}$ at $R^2 = 0.994$ and
+contains essentially no geometry ($R^2 \le 0.04$). Geometry is readable
+from $\boldsymbol{z}_{g}$ ($R^2 \approx 0.69$--$0.74$) and nearly absent
+from $\boldsymbol{z}_{\mu}$. The moderate (rather than high) geometry
+recovery is not alarming: the probes are linear, while area and centroid
+are nonlinear functionals of the SDF that $\boldsymbol{z}_{g}$ encodes.
+
+\paragraph{What failed.} Reynolds-number information leaked into the
+other blocks: $\log \mathrm{Re}$ is readable from $\boldsymbol{z}_{g}$ at
+$R^2 = 0.900$ and from $\boldsymbol{z}_{\xi}$ at $0.777$. This is exactly
+the factor-scrambling that the impossibility result of Locatello et al.\
+predicts for unconstrained latents: the decoder needs Re to reconstruct
+the field and is free to stash copies of it in every block, and the
+reconstruction loss rewards doing so. The decorrelation penalty is meant
+to prevent this, but at $\lambda_{\mathrm{decorr}} = 0.01$ it is roughly
+two orders of magnitude weaker than the reconstruction term and loses the
+competition.
+
+\paragraph{Next experiment.} Since the leaked Re is \emph{linearly}
+recoverable from $\boldsymbol{z}_{g}$ --- which is precisely what a
+Pearson penalty can act on --- the next run raises
+$\lambda_{\mathrm{decorr}}$ from $0.01$ to $0.5$ with all else fixed.
+Success criteria: the off-diagonal $\log \mathrm{Re}$ entries drop
+substantially (toward $R^2 \lesssim 0.3$) while the reconstruction error
+and the $\boldsymbol{z}_{g}$ geometry row remain near their Run-1 values.
+If a strong Pearson weight cannot remove the leakage, the natural
+escalation is HSIC (L7, nonlinear dependence) and the swap-consistency
+loss (L12), which makes the factorization functional rather than merely
+statistical.
+
 \section{Next steps}
 
 Deliberately excluded from this first version and planned as increments once
