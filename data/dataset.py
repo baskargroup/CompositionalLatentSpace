@@ -1,7 +1,12 @@
+import hashlib
+import random
+import warnings
+from collections import defaultdict
+
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 
 
 class CompositionalLDCDataset(Dataset):
@@ -18,6 +23,8 @@ class CompositionalLDCDataset(Dataset):
         mask     : (1, H, W)  binary fluid mask (1 = fluid, 0 = solid)
         re       : ()         raw Reynolds number
         log_re   : ()         standardized log10(Re), the regime label for z_mu
+        geo_id   : ()         integer id of the geometry (samples sharing a shape
+                              share an id), used by the same-factor invariance loss
     """
 
     def __init__(self, file_path_x, file_path_y, resolution=256, re_stats=None):
@@ -26,6 +33,17 @@ class CompositionalLDCDataset(Dataset):
 
         # Re channel is a constant-valued map; extract the scalar
         re = torch.tensor(x[:, 0, 0, 0].copy(), dtype=torch.float32)
+
+        # Group samples by geometry: identical shapes have byte-identical raw SDFs
+        digests = [hashlib.md5(x[i, 1].tobytes()).hexdigest() for i in range(x.shape[0])]
+        digest_to_id = {}
+        geo_ids = []
+        for d in digests:
+            if d not in digest_to_id:
+                digest_to_id[d] = len(digest_to_id)
+            geo_ids.append(digest_to_id[d])
+        self.geo_ids = torch.tensor(geo_ids, dtype=torch.long)
+
         sdf = torch.tensor(x[:, 1:2], dtype=torch.float32)
         mask = torch.tensor(x[:, 2:3], dtype=torch.float32)
         if mask.max() > 1.0:
@@ -61,6 +79,7 @@ class CompositionalLDCDataset(Dataset):
             'mask': self.mask[idx],
             're': self.re[idx],
             'log_re': self.log_re[idx],
+            'geo_id': self.geo_ids[idx],
         }
 
     def geometry_descriptors(self):
@@ -77,3 +96,56 @@ class CompositionalLDCDataset(Dataset):
         cx = (solid * xs).sum(dim=(1, 2)) / area
         cy = (solid * ys).sum(dim=(1, 2)) / area
         return torch.stack([area / (h * w), cx, cy], dim=1)
+
+
+class GroupedBatchSampler(Sampler):
+    """
+    Group-structured minibatches (working notes §13): every batch is composed
+    of `groups_per_batch` geometry groups with `batch_size / groups_per_batch`
+    samples each, so that samples sharing a geometry (at different Re) co-occur
+    in the batch and the same-factor invariance loss (L10) is well-defined.
+    """
+
+    def __init__(self, group_ids, batch_size, groups_per_batch=4, seed=0):
+        if batch_size % groups_per_batch != 0:
+            raise ValueError('batch_size must be divisible by groups_per_batch')
+        self.samples_per_group = batch_size // groups_per_batch
+        self.groups_per_batch = groups_per_batch
+        self.seed = seed
+        self.epoch = 0
+
+        self.groups = defaultdict(list)
+        for idx, gid in enumerate(group_ids):
+            self.groups[int(gid)].append(idx)
+
+        max_group = max(len(v) for v in self.groups.values())
+        if max_group < 2:
+            warnings.warn('Every geometry appears only once in this dataset; '
+                          'the same-factor invariance loss will be zero.')
+
+    def _chunks(self, rng):
+        chunks = []
+        for idxs in self.groups.values():
+            idxs = idxs[:]
+            rng.shuffle(idxs)
+            for j in range(0, len(idxs), self.samples_per_group):
+                chunk = idxs[j:j + self.samples_per_group]
+                while len(chunk) < self.samples_per_group:
+                    chunk.append(rng.choice(idxs))  # pad short chunks from the group
+                chunks.append(chunk)
+        rng.shuffle(chunks)
+        return chunks
+
+    def __iter__(self):
+        rng = random.Random(self.seed + self.epoch)
+        self.epoch += 1
+        chunks = self._chunks(rng)
+        for b in range(len(chunks) // self.groups_per_batch):
+            batch = []
+            for chunk in chunks[b * self.groups_per_batch:(b + 1) * self.groups_per_batch]:
+                batch.extend(chunk)
+            yield batch
+
+    def __len__(self):
+        n_chunks = sum(-(-len(v) // self.samples_per_group) for v in self.groups.values())
+        return n_chunks // self.groups_per_batch

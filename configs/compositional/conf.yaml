@@ -6,6 +6,7 @@ data:
   file_path_test_y: /work/mech-ai/arabeh/data_prep_ns/LDC_NS_2D/processed/easy/all_ldc_test_y.npz
   resolution: 256        # fields are bilinearly resized from 512 to this
   batch_size: 16
+  groups_per_batch: 4    # geometry groups per batch (used when lambda_inv > 0)
   num_workers: 6
 
 model:
@@ -17,7 +18,8 @@ model:
   lambda_recon: 1.0
   lambda_regime: 0.1
   lambda_geo: 0.1
-  lambda_decorr: 0.1
+  lambda_decorr: 0.01    # back to run-1 value so run 4 isolates the L10 effect
+  lambda_inv: 0.1        # L10 same-factor invariance of z_g within geometry groups
   lr: 0.001
 
 trainer:

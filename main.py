@@ -11,7 +11,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
 from torch.utils import data
 
-from data.dataset import CompositionalLDCDataset
+from data.dataset import CompositionalLDCDataset, GroupedBatchSampler
 from models.compositional.compositional_ae import CompositionalAE
 
 
@@ -40,9 +40,19 @@ def main(config_path):
         re_stats=train_dataset.re_stats,  # standardize Re with train statistics
     )
 
-    train_loader = data.DataLoader(train_dataset, batch_size=config.data.batch_size,
-                                   shuffle=True, drop_last=False,
-                                   num_workers=config.data.num_workers)
+    if config.model.get('lambda_inv', 0) > 0:
+        # group-structured minibatches: same geometry at several Re per batch,
+        # required for the same-factor invariance loss (L10)
+        sampler = GroupedBatchSampler(train_dataset.geo_ids.tolist(),
+                                      batch_size=config.data.batch_size,
+                                      groups_per_batch=config.data.groups_per_batch,
+                                      seed=config.trainer.seed)
+        train_loader = data.DataLoader(train_dataset, batch_sampler=sampler,
+                                       num_workers=config.data.num_workers)
+    else:
+        train_loader = data.DataLoader(train_dataset, batch_size=config.data.batch_size,
+                                       shuffle=True, drop_last=False,
+                                       num_workers=config.data.num_workers)
     val_loader = data.DataLoader(test_dataset, batch_size=config.data.batch_size,
                                  shuffle=False, drop_last=False,
                                  num_workers=config.data.num_workers)

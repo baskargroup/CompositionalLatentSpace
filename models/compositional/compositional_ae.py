@@ -5,6 +5,22 @@ import torch.nn.functional as F
 from models.compositional.networks import FieldEncoder, FieldDecoder, RegimeHead, SDFHead
 
 
+def same_factor_invariance(z, group_ids):
+    """Same-factor invariance (loss L10 of the working notes): penalize the
+    variance of a latent block across batch samples that share a factor
+    (here: the same geometry at different Re). Requires group-structured
+    minibatches so that groups actually co-occur in the batch."""
+    loss = z.new_zeros(())
+    count = 0
+    for gid in group_ids.unique():
+        sel = group_ids == gid
+        if sel.sum() >= 2:
+            zg = z[sel]
+            loss = loss + ((zg - zg.mean(0, keepdim=True)) ** 2).mean()
+            count += 1
+    return loss / count if count else loss
+
+
 def cross_block_correlation(a, b, eps=1e-8):
     """Mean absolute Pearson correlation between coordinates of two latent blocks
     (loss L6 of the working notes), computed across the batch."""
@@ -35,7 +51,7 @@ class CompositionalAE(pl.LightningModule):
     def __init__(self, in_channels=3, resolution=256, base_channels=32,
                  latent_mu=4, latent_g=32, latent_xi=16, sdf_resolution=64,
                  lambda_recon=1.0, lambda_regime=0.1, lambda_geo=0.1,
-                 lambda_decorr=0.01, lr=1e-3):
+                 lambda_decorr=0.01, lambda_inv=0.0, lr=1e-3):
         super().__init__()
         self.save_hyperparameters()
 
@@ -81,11 +97,15 @@ class CompositionalAE(pl.LightningModule):
                        + cross_block_correlation(z_mu, z_xi)
                        + cross_block_correlation(z_g, z_xi)) / 3.0
 
+        # L10: z_g must not change across samples sharing a geometry
+        loss_inv = same_factor_invariance(z_g, batch['geo_id'])
+
         h = self.hparams
         total = (h.lambda_recon * loss_recon + h.lambda_regime * loss_regime
-                 + h.lambda_geo * loss_geo + h.lambda_decorr * loss_decorr)
+                 + h.lambda_geo * loss_geo + h.lambda_decorr * loss_decorr
+                 + h.lambda_inv * loss_inv)
         return total, {'recon': loss_recon, 'regime': loss_regime,
-                       'geo': loss_geo, 'decorr': loss_decorr}
+                       'geo': loss_geo, 'decorr': loss_decorr, 'inv': loss_inv}
 
     def training_step(self, batch, batch_idx):
         total, parts = self._losses(batch)
