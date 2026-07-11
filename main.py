@@ -40,6 +40,21 @@ def main(config_path):
         re_stats=train_dataset.re_stats,  # standardize Re with train statistics
     )
 
+    if config.model.get('lambda_swap', 0) > 0:
+        # swap consistency needs same-Re pairs across different geometries
+        re_to_geos = {}
+        for re_val, gid in zip(train_dataset.re.tolist(),
+                               train_dataset.geo_ids.tolist()):
+            re_to_geos.setdefault(re_val, set()).add(gid)
+        n_swappable = sum(1 for re_val, gid in zip(train_dataset.re.tolist(),
+                                                   train_dataset.geo_ids.tolist())
+                          if len(re_to_geos[re_val]) >= 2)
+        print(f'Swap consistency: {n_swappable}/{len(train_dataset)} train samples '
+              f'have a same-Re partner at a different geometry.')
+        if n_swappable == 0:
+            print('WARNING: no swappable pairs exist; the swap loss will be zero. '
+                  'Re values likely differ across geometries.')
+
     if config.model.get('lambda_inv', 0) > 0:
         # group-structured minibatches: same geometry at several Re per batch,
         # required for the same-factor invariance loss (L10)

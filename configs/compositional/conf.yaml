@@ -20,6 +20,7 @@ model:
   lambda_geo: 0.1
   lambda_decorr: 0.01    # back to run-1 value so run 4 isolates the L10 effect
   lambda_inv: 0.1        # L10 same-factor invariance of z_g within geometry groups
+  lambda_swap: 0.1       # L12 swap consistency: z_mu recombinable across geometries at same Re
   lr: 0.001
 
 trainer:

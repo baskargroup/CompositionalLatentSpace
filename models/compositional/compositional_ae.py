@@ -51,7 +51,7 @@ class CompositionalAE(pl.LightningModule):
     def __init__(self, in_channels=3, resolution=256, base_channels=32,
                  latent_mu=4, latent_g=32, latent_xi=16, sdf_resolution=64,
                  lambda_recon=1.0, lambda_regime=0.1, lambda_geo=0.1,
-                 lambda_decorr=0.01, lambda_inv=0.0, lr=1e-3):
+                 lambda_decorr=0.01, lambda_inv=0.0, lambda_swap=0.0, lr=1e-3):
         super().__init__()
         self.save_hyperparameters()
 
@@ -82,6 +82,28 @@ class CompositionalAE(pl.LightningModule):
         per = [(se[:, i].sum(dim=(1, 2)) / node_count).mean() for i in range(se.shape[1])]
         return full, per
 
+    def swap_consistency(self, z_mu, z_g, z_xi, batch):
+        """Swap consistency (loss L12 of the working notes): for in-batch pairs
+        (i, k) at the same Re but different geometry, decoding [z_mu from i ||
+        z_g, z_xi from k] must reproduce sample k's true field. This demands the
+        regime code be functionally interchangeable across geometries at fixed
+        dynamic similarity. Returns (loss, number_of_pairs)."""
+        re, gid = batch['re'], batch['geo_id']
+        n = re.shape[0]
+        same_re = re.view(-1, 1) == re.view(1, -1)
+        diff_geo = gid.view(-1, 1) != gid.view(1, -1)
+        idx_i, idx_k = torch.nonzero(same_re & diff_geo, as_tuple=True)
+        if idx_i.numel() == 0:
+            return z_mu.new_zeros(()), 0
+        if idx_i.numel() > n:  # cap decode cost at one extra batch
+            keep = torch.randperm(idx_i.numel(), device=idx_i.device)[:n]
+            idx_i, idx_k = idx_i[keep], idx_k[keep]
+        z_swap = torch.cat([z_mu[idx_i], z_g[idx_k], z_xi[idx_k]], dim=1)
+        recon = self.decoder(z_swap)
+        loss = self.masked_recon_loss(recon, batch['fields'][idx_k],
+                                      batch['mask'][idx_k])
+        return loss, idx_i.numel()
+
     def _losses(self, batch):
         fields, mask = batch['fields'], batch['mask']
         recon, (z_mu, z_g, z_xi) = self(fields)
@@ -100,12 +122,19 @@ class CompositionalAE(pl.LightningModule):
         # L10: z_g must not change across samples sharing a geometry
         loss_inv = same_factor_invariance(z_g, batch['geo_id'])
 
+        # L12: z_mu must be recombinable across geometries at the same Re
         h = self.hparams
+        if h.lambda_swap > 0:
+            loss_swap, n_pairs = self.swap_consistency(z_mu, z_g, z_xi, batch)
+        else:
+            loss_swap, n_pairs = loss_recon.new_zeros(()), 0
+
         total = (h.lambda_recon * loss_recon + h.lambda_regime * loss_regime
                  + h.lambda_geo * loss_geo + h.lambda_decorr * loss_decorr
-                 + h.lambda_inv * loss_inv)
+                 + h.lambda_inv * loss_inv + h.lambda_swap * loss_swap)
         return total, {'recon': loss_recon, 'regime': loss_regime,
-                       'geo': loss_geo, 'decorr': loss_decorr, 'inv': loss_inv}
+                       'geo': loss_geo, 'decorr': loss_decorr, 'inv': loss_inv,
+                       'swap': loss_swap, 'swap_pairs': float(n_pairs)}
 
     def training_step(self, batch, batch_idx):
         total, parts = self._losses(batch)
