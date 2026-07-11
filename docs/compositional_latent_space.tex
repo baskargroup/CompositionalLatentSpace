@@ -391,6 +391,62 @@ $\boldsymbol{z}_{\mu}$ and $\boldsymbol{z}_{g}$; (iii)~shrinking
 $L_{\xi}$, since a steady, deterministic dataset arguably needs little
 residual capacity.
 
+\subsection{Run 5: adding swap consistency}
+
+Run 5 adds the swap-consistency loss (L12) on top of the Run-4
+configuration ($\lambda_{\mathrm{swap}} = 0.1$). For in-batch pairs
+$(i, k)$ at the same Reynolds number but different geometry --- 87\% of
+training samples have such a partner --- the decoder must reproduce
+sample $k$'s true field from the hybrid latent
+$[\boldsymbol{z}_{\mu}^{(i)} \,\|\, \boldsymbol{z}_{g}^{(k)} \,\|\,
+\boldsymbol{z}_{\xi}^{(k)}]$: the regime code must be \emph{functionally
+interchangeable} across geometries at fixed dynamic similarity.
+Table~\ref{tab:probes-run5} reports the probes, with Run-4 values in
+parentheses.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Run 5: linear-probe $R^2$ with invariance (L10) plus swap
+  consistency (L12); Run-4 values (L10 only) in parentheses. Bold marks
+  the block that should carry each target.}
+  \label{tab:probes-run5}
+  \begin{tabular}{lccc}
+    \toprule
+    Target & $\boldsymbol{z}_{\mu}$ & $\boldsymbol{z}_{g}$ & $\boldsymbol{z}_{\xi}$ \\
+    \midrule
+    $\log \mathrm{Re}$ & \textbf{0.972} (0.986) & 0.343 (0.215) & 0.356 (0.412) \\
+    Area fraction      & $-0.005$ ($-0.003$)    & \textbf{0.693} (0.677) & 0.170 (0.130) \\
+    Centroid $x$       & $-0.003$ (0.009)       & \textbf{0.767} (0.756) & 0.235 (0.143) \\
+    Centroid $y$       & 0.003 (0.011)          & \textbf{0.718} (0.711) & 0.069 (0.047) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Outcome.} The block-diagonal pattern is preserved, the
+predicted cleanup of the residual block occurred (Re from
+$\boldsymbol{z}_{\xi}$: $0.412 \to 0.356$; swap decoding uses the
+target's $\boldsymbol{z}_{\xi}$ with the source's
+$\boldsymbol{z}_{\mu}$, punishing Re content hidden in the residual),
+and geometry recovery from $\boldsymbol{z}_{g}$ is the best of all runs
+($0.69$--$0.77$). The one cell that moved the wrong way is Re from
+$\boldsymbol{z}_{g}$ ($0.215 \to 0.343$); differences of this size
+between single-seed runs should not be over-interpreted --- resolving
+them requires the multi-seed protocol of the project plan. The honest
+summary at this stage: \emph{same-factor invariance (L10) is the
+decisive ingredient for block separation; the marginal effect of L12 on
+the probe matrix is small and within plausible seed variance.}
+
+\paragraph{What the probes cannot see.} Linear probes measure whether a
+block \emph{contains} the right information, not whether the blocks are
+\emph{recombinable through the decoder} --- which is precisely the
+property L12 trains. The next diagnostic increment is therefore a
+swap-error metric on the test set: encode two samples, decode the hybrid
+latent, and compare against the true cross-combination field; reported
+alongside the ordinary reconstruction error, it quantifies
+compositionality directly. Further planned steps: multi-seed variance
+estimates for Runs 4--5, and concept-vector arithmetic on
+$\boldsymbol{z}_{\mu}$ and $\boldsymbol{z}_{g}$.
+
 \section{Next steps}
 
 Deliberately excluded from this first version and planned as increments once
