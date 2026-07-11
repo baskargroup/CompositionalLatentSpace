@@ -106,7 +106,8 @@ def main(config_path, checkpoint_path, n_samples=64, step=1.0, seed=0):
     print(f'\nConcept-vector sensitivity matrix ({len(idx)} base samples, '
           f'step = {step} sigma, decode -> re-encode -> probe):')
     print('rows = direction walked, columns = parameter that responded\n')
-    header = f'{"walk \\ read":<14}' + ''.join(f'{j:>12}' for j in names)
+    row_label = 'walk \\ read'
+    header = f'{row_label:<14}' + ''.join(f'{j:>12}' for j in names)
     print(header)
     print('-' * len(header))
     for a, k in enumerate(names):
