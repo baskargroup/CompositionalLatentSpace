@@ -220,6 +220,57 @@ escalation is HSIC (L7, nonlinear dependence) and the swap-consistency
 loss (L12), which makes the factorization functional rather than merely
 statistical.
 
+\subsection{Run 2: strong Pearson decorrelation}
+
+Identical to Run~1 except $\lambda_{\mathrm{decorr}} = 0.5$ (a $50\times$
+increase). Table~\ref{tab:probes-run2} reports the measured linear-probe
+$R^2$, with the Run-1 values for comparison.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Run 2: measured linear-probe $R^2$ on the test split
+  ($\lambda_{\mathrm{decorr}} = 0.5$), with Run-1 values
+  ($\lambda_{\mathrm{decorr}} = 0.01$) in parentheses. Bold marks the
+  block that should carry each target.}
+  \label{tab:probes-run2}
+  \begin{tabular}{lccc}
+    \toprule
+    Target & $\boldsymbol{z}_{\mu}$ & $\boldsymbol{z}_{g}$ & $\boldsymbol{z}_{\xi}$ \\
+    \midrule
+    $\log \mathrm{Re}$ & \textbf{0.886} (0.994) & 0.719 (0.900) & 0.487 (0.777) \\
+    Area fraction      & $-0.002$ (0.042)       & \textbf{0.402} (0.688) & 0.262 (0.172) \\
+    Centroid $x$       & $-0.016$ (0.027)       & \textbf{0.565} (0.736) & 0.378 (0.373) \\
+    Centroid $y$       & 0.016 ($-0.013$)       & \textbf{0.427} (0.690) & 0.115 (0.214) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Outcome: a Pareto trade-off, not a fix.} The leakage shrank
+--- $\log \mathrm{Re}$ from $\boldsymbol{z}_{g}$ dropped from $0.900$ to
+$0.719$ and from $\boldsymbol{z}_{\xi}$ from $0.777$ to $0.487$ --- but
+so did everything else: the on-diagonal regime readout degraded
+($0.994 \to 0.886$) and the geometry recovery from $\boldsymbol{z}_{g}$
+fell by roughly $0.2$ across all three descriptors. The strong Pearson
+penalty cannot distinguish redundant copies of information (which we want
+removed) from informative, structured coordinates (which we want kept),
+so at large weight it partially scrambles all blocks while still leaving
+the leakage far above the $R^2 \lesssim 0.3$ target. A $50\times$
+increase in decorrelation pressure bought a modest leakage reduction at a
+real cost --- strong evidence that weight tuning of a statistical
+independence penalty alone will not functionally separate the blocks.
+
+\paragraph{Next experiments.} Two directions, in order:
+(i)~$\lambda_{\mathrm{decorr}} = 0.1$ as an intermediate sweep point ---
+together with Runs~1--2 this begins the (reconstruction,
+identifiability) Pareto front that the project plan targets;
+(ii)~\emph{same-factor invariance} (L10): the dataset contains each
+geometry at multiple Reynolds numbers, so we can penalize the variance of
+$\boldsymbol{z}_{g}$ across samples that share a geometry. This demands
+directly that $\boldsymbol{z}_{g}$ be unchanged when only Re changes ---
+a functional constraint on the factorization rather than a statistical
+one, and the first step toward the group-structured supervision at the
+heart of the framework's identifiability argument.
+
 \section{Next steps}
 
 Deliberately excluded from this first version and planned as increments once
