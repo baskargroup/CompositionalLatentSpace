@@ -447,6 +447,59 @@ compositionality directly. Further planned steps: multi-seed variance
 estimates for Runs 4--5, and concept-vector arithmetic on
 $\boldsymbol{z}_{\mu}$ and $\boldsymbol{z}_{g}$.
 
+\subsection{Swap-error diagnostic: separation is not recombinability}
+
+The swap-error metric decodes the hybrid latent
+$[\boldsymbol{z}_{\mu}^{(i)} \,\|\, \boldsymbol{z}_{g}^{(k)} \,\|\,
+\boldsymbol{z}_{\xi}^{(k)}]$ for same-Re, different-geometry test pairs
+and compares against sample $k$'s true field; reported as a ratio to the
+ordinary reconstruction error on the same samples, so ratio $\approx 1$
+means swapping in another sample's regime code costs nothing. Because
+the metric needs no retraining, it was evaluated retroactively on the
+three key checkpoints (Table~\ref{tab:swap}).
+
+\begin{table}[htbp]
+  \centering
+  \caption{Same-Re swap-consistency error on the test split (256 pairs),
+  evaluated retroactively on stored checkpoints.}
+  \label{tab:swap}
+  \begin{tabular}{lccc}
+    \toprule
+    Run & Losses & Probe separation & Swap ratio \\
+    \midrule
+    Run 1 & reconstruction $+$ weak L6 & poor (Re everywhere) & 1.06 \\
+    Run 4 & $+$ invariance (L10)       & good                 & 1.35 \\
+    Run 5 & $+$ swap (L12)             & good                 & \textbf{1.04} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Interpretation.} The three numbers tell a story the probe
+tables could not. Run 1 passes the swap test (1.06) \emph{for the wrong
+reason}: the decoder held redundant Re copies in every block, so it
+barely depended on which sample's $\boldsymbol{z}_{\mu}$ it received.
+Run 4's training removed the redundancy --- and thereby made the decoder
+genuinely dependent on $\boldsymbol{z}_{\mu}$, so sample-to-sample noise
+in the regime code now propagates to the output (1.35): \emph{separation
+alone makes the factorization brittle}. Run 5's swap loss trains
+exactly that sensitivity away, restoring ratio 1.04 while keeping the
+probe separation. The combination --- blocks that are both separated
+\emph{and} functionally interchangeable --- requires both structural
+losses; neither the probe matrix nor the swap ratio alone certifies it.
+Run 5 is the best configuration overall.
+
+\paragraph{Cross-Re swap.} The same-Re swap is a consistency test, but a
+weak one when regime supervision makes $\boldsymbol{z}_{\mu}$ nearly
+deterministic in Re. The diagnostic suite therefore now also includes a
+\emph{cross-Re} swap: take $\boldsymbol{z}_{\mu}$ from a sample at
+$\mathrm{Re}_i$ and $\boldsymbol{z}_{g}, \boldsymbol{z}_{\xi}$ from a
+different geometry observed at a different Re, decode, and compare
+against the true field of that geometry at $\mathrm{Re}_i$ (present in
+the dataset). This is genuine \emph{transfer} --- using the regime code
+to move a geometry to a new operating point --- and cannot be passed by
+Re-determinism of $\boldsymbol{z}_{\mu}$. Cross-Re ratios for the three
+checkpoints are the next measurement.
+
 \section{Next steps}
 
 Deliberately excluded from this first version and planned as increments once

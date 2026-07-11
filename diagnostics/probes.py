@@ -68,21 +68,57 @@ def swap_error(model, dataset, max_pairs=256, batch_size=16, seed=0):
     keep = torch.randperm(idx_i.numel(), generator=gen)[:max_pairs]
     idx_i, idx_k = idx_i[keep], idx_k[keep]
 
+    return _paired_decode_error(model, dataset, idx_i, idx_k, idx_k, batch_size)
+
+
+@torch.no_grad()
+def cross_re_swap_error(model, dataset, max_pairs=256, batch_size=16, seed=0):
+    """
+    Cross-Re swap (the demanding transfer test): take z_mu from sample i at
+    Re_i and z_g, z_xi from sample k of a DIFFERENT geometry at a DIFFERENT
+    Re, decode, and compare against the true field of geometry k at Re_i,
+    which the dataset contains as sample m. Unlike the same-Re swap, this
+    cannot be passed by z_mu being a deterministic function of Re: the decoder
+    must genuinely compose the regime code with a geometry it never saw at
+    that operating point in this latent combination.
+    """
+    re, gid = dataset.re, dataset.geo_ids
+    lookup = {(r, g): m for m, (r, g) in enumerate(zip(re.tolist(), gid.tolist()))}
+    idx_i, idx_k, idx_m = [], [], []
+    for i, (r_i, g_i) in enumerate(zip(re.tolist(), gid.tolist())):
+        for k, (r_k, g_k) in enumerate(zip(re.tolist(), gid.tolist())):
+            if g_i != g_k and r_i != r_k:
+                m = lookup.get((r_i, g_k))
+                if m is not None:
+                    idx_i.append(i); idx_k.append(k); idx_m.append(m)
+    if not idx_i:
+        return None
+    gen = torch.Generator().manual_seed(seed)
+    keep = torch.randperm(len(idx_i), generator=gen)[:max_pairs]
+    to_t = lambda lst: torch.tensor(lst)[keep]
+    return _paired_decode_error(model, dataset, to_t(idx_i), to_t(idx_k),
+                                to_t(idx_m), batch_size)
+
+
+@torch.no_grad()
+def _paired_decode_error(model, dataset, idx_i, idx_k, idx_m, batch_size):
+    """Decode [z_mu(i) || z_g(k) || z_xi(k)] and compare against sample m's
+    truth; also compute m's ordinary reconstruction error for reference."""
     swap_sum, recon_sum, n = 0.0, 0.0, 0
     for b in range(0, idx_i.numel(), batch_size):
-        bi, bk = idx_i[b:b + batch_size], idx_k[b:b + batch_size]
-        fields_i, fields_k = dataset.fields[bi], dataset.fields[bk]
-        mask_k = dataset.mask[bk]
-        z_mu_i, _, _ = model.encode(fields_i)
-        z_mu_k, z_g_k, z_xi_k = model.encode(fields_k)
+        bi, bk, bm = idx_i[b:b + batch_size], idx_k[b:b + batch_size], idx_m[b:b + batch_size]
+        z_mu_i, _, _ = model.encode(dataset.fields[bi])
+        _, z_g_k, z_xi_k = model.encode(dataset.fields[bk])
+        z_mu_m, z_g_m, z_xi_m = model.encode(dataset.fields[bm])
+        fields_m, mask_m = dataset.fields[bm], dataset.mask[bm]
 
         recon_swap = model.decoder(torch.cat([z_mu_i, z_g_k, z_xi_k], dim=1))
-        recon_self = model.decoder(torch.cat([z_mu_k, z_g_k, z_xi_k], dim=1))
+        recon_self = model.decoder(torch.cat([z_mu_m, z_g_m, z_xi_m], dim=1))
 
-        m = len(bi)
-        swap_sum += model.masked_recon_loss(recon_swap, fields_k, mask_k).item() * m
-        recon_sum += model.masked_recon_loss(recon_self, fields_k, mask_k).item() * m
-        n += m
+        cnt = len(bi)
+        swap_sum += model.masked_recon_loss(recon_swap, fields_m, mask_m).item() * cnt
+        recon_sum += model.masked_recon_loss(recon_self, fields_m, mask_m).item() * cnt
+        n += cnt
     return swap_sum / n, recon_sum / n, n
 
 
@@ -130,15 +166,17 @@ def main(config_path, checkpoint_path, split='test'):
     print('\nExpected pattern: log_re high from z_mu only; '
           'geometry targets high from z_g only.')
 
-    result = swap_error(model, dataset)
-    if result is None:
-        print('\nSwap error: no same-Re/different-geometry pairs in this split.')
-    else:
-        swap_mse, recon_mse, n_pairs = result
-        print(f'\nSwap-consistency error ({n_pairs} pairs): '
-              f'swap={swap_mse:.3e}  recon={recon_mse:.3e}  '
-              f'ratio={swap_mse / max(recon_mse, 1e-12):.2f}')
-        print('(ratio near 1 = blocks recombine cleanly through the decoder)')
+    for name, fn in [('Same-Re swap', swap_error), ('Cross-Re swap', cross_re_swap_error)]:
+        result = fn(model, dataset)
+        if result is None:
+            print(f'\n{name}: no eligible pairs in this split.')
+        else:
+            swap_mse, recon_mse, n_pairs = result
+            print(f'\n{name} error ({n_pairs} pairs): '
+                  f'swap={swap_mse:.3e}  recon={recon_mse:.3e}  '
+                  f'ratio={swap_mse / max(recon_mse, 1e-12):.2f}')
+    print('(ratio near 1 = blocks recombine cleanly through the decoder; '
+          'cross-Re is the demanding transfer test)')
 
     out_dir = os.path.dirname(checkpoint_path) or '.'
     out_path = os.path.join(out_dir, f'probe_r2_{split}.csv')
