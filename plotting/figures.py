@@ -149,7 +149,9 @@ def transfer_figure(model, dataset, outdir):
     fig, axs = plt.subplots(3, 4, figsize=(12.5, 9))
     for r, ch in enumerate(CHANNELS):
         err = np.abs(pred[r] - truth[r])
-        vmax = robust_vmax(masked(truth[r], mask), masked(donor[r], mask))
+        # scale to the TARGET fields: the donor (low Re) has much larger
+        # pressure amplitudes and may saturate, which is itself informative
+        vmax = robust_vmax(masked(truth[r], mask))
         err_vmax = robust_vmax(masked(err, mask))
         im_f, im_e = _panel_row(axs, r, [donor[r], pred[r], truth[r], err],
                                 mask, vmax, err_vmax)
