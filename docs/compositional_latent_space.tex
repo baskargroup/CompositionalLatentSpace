@@ -1212,12 +1212,36 @@ so while providing what none of the baselines offer: a latent space with
 separated, editable, transferable factors. The relative weakness is the
 boundary layer: every baseline scores \emph{higher} on M2 than M1
 (near-wall velocities are small, so boundary MSE is naturally lower),
-whereas our M2 is flat ($\approx$ M1). This is the expected cost of our
-$256^2$ native resolution, which smooths exactly the thin near-surface
-layers that M2 measures --- and it points directly at two queued
-improvements: training at full resolution, and the boundary-layer
-weighted reconstruction loss (L3), which concentrates training signal in
-the M2 region.
+whereas our M2 is flat ($\approx$ M1). We initially suspected our
+$256^2$ native resolution; the follow-up experiment below shows the
+real cause is subtler and more interesting.
+
+\paragraph{Run 8: what the boundary loss buys --- and what it costs.}
+To test whether the flat M2 could be fixed by loss design, Run 8 added
+the boundary-layer weighted reconstruction loss (L3 of the working
+notes) to the otherwise unchanged Run-7 recipe: a second reconstruction
+term restricted to the band $0 \le \mathrm{SDF} \le 0.2$ and normalized
+by the \emph{band's} own pixel count. The normalization is the point:
+the band is only a few percent of the fluid pixels, so under the plain
+loss its errors are diluted away; giving it its own average makes the
+thin near-wall region worth as much as the entire rest of the fluid.
+The result is a clean trade-off, visible from both ends. On the
+reconstruction side L3 does exactly its job: M2 rises from $53.4$ to
+$56.1$ and now sits \emph{above} M1 ($53.8$), reproducing the
+$\mathrm{M2} > \mathrm{M1}$ pattern of the published baselines --- so
+the flat M2 was \emph{not} a resolution ceiling but loss dilution. But
+the compositional properties pay for it: donor prediction drops from
+$46.2$ to $39.7$, the cross-Re transfer ratio degrades from
+$1.48 \pm 0.09$ to $2.86$, and the residual's Re content rises to
+$0.77$ --- and this time the readability is \emph{not} inert. The
+mechanism is coherent: to nail near-wall detail the decoder learns to
+lean on the sample-specific content of $\boldsymbol{z}_{\xi}$, and
+donor prediction and swaps are exactly the modes where
+$\boldsymbol{z}_{\xi}$ comes from a different sample. Boundary-layer
+fidelity and compositional recombinability compete for the same decoder
+capacity, and L3 buys one with the other. Since transfer is this
+study's central property, Run 7 remains the final model, and we accept
+its flat M2 as the price of a latent space that recombines.
 
 \section{Status and next steps}
 
@@ -1262,20 +1286,16 @@ magnitude below the fields. The comparison against the published
 FlowBench baselines (Table~\ref{tab:baselines}) is also complete: in the
 operator-comparable donor-prediction mode the model edges out every
 classical neural operator on global accuracy (M1 $= 46.2$ vs.\
-$44$--$46$), satisfying the project plan's first success criterion,
-with the boundary layer (M2) identified as the resolution-limited
-weakness.
+$44$--$46$), satisfying the project plan's first success criterion.
+The boundary-layer weakness (flat M2) was then diagnosed by Run 8: the
+L3 boundary-weighted loss fixes it in reconstruction (M2 $53.4 \to
+56.1$) but degrades transfer ($1.48 \to 2.86$) --- boundary fidelity
+and recombinability compete for decoder capacity, so Run 7 remains the
+final model.
 
 \paragraph{Planned increments, in order.}
 %
 \begin{itemize}
-  \item \textbf{Boundary-layer weighted reconstruction (L3)}, directly
-        motivated by the flat M2 score: an additional reconstruction
-        term restricted to the band $0 \le \mathrm{SDF} \le 0.2$ and
-        normalized by the band's own pixel count, so the thin near-wall
-        region --- a few percent of the fluid pixels, diluted away under
-        the plain loss --- carries real training weight. Implemented as
-        Run 8 (the Run-7 recipe plus this term); training queued.
   \item \textbf{Physics/spectral loss family}: PDE residual (L18) and/or
         spectrum matching (L22), the one loss family not yet ablated.
   \item \textbf{Residual capacity}: shrink the residual block (e.g.\
