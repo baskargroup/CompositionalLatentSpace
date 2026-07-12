@@ -1100,6 +1100,55 @@ appearance of the document's central theme: what a block statistically
 \emph{uses} are different properties --- and the functional one is what
 matters for composition and transfer.
 
+\paragraph{Multi-seed confirmation.} Because Run 7 is the final
+architecture, its numbers deserve the same treatment the earlier runs
+received: two more seeds were trained and every metric is reported as
+mean $\pm$ standard deviation (Table~\ref{tab:multiseed-run7}, with the
+Run-6 multi-seed values alongside for comparison). Every headline claim
+survives. The leak closure is seed-proof --- $-0.14 \pm 0.01$, negative
+in every seed, and with the smallest error bar in the table, exactly as
+expected for a property enforced by \emph{architecture} rather than
+learned from data. The geometry recovery ($0.91 \pm 0.05$ versus Run 6's
+$0.73 \pm 0.02$) and the transfer improvement ($1.48 \pm 0.09$ versus
+$2.0 \pm 0.1$) are both real: the distributions do not overlap. The
+donor test is remarkably tight ($0.573 \pm 0.002$): in every seed the
+decoder takes the operating point from $\boldsymbol{z}_{\mu}$. And the
+squeezed balloon behaves exactly as the functional-inertness
+interpretation predicts: the residual's Re content has the
+\emph{largest} error bar in the table ($0.60 \pm 0.11$, ranging from
+$0.44$ to $0.69$ across seeds), yet the transfer ratio barely moves. If
+the decoder actually used that Re content, transfer quality would swing
+with it; it does not.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Run 7 multi-seed results: mean $\pm$ standard deviation over
+  three random seeds, with the Run-6 multi-seed values (from
+  Table~\ref{tab:multiseed}) for comparison. $^{\dagger}$Average of the
+  three geometry-descriptor probes.}
+  \label{tab:multiseed-run7}
+  \begin{tabular}{lcc}
+    \toprule
+    Metric & Run 6 ($+$cross-Re) & Run 7 (static geometry) \\
+    \midrule
+    $\log \mathrm{Re}$ from $\boldsymbol{z}_{\mu}$ (want high)
+      & $0.984 \pm 0.002$ & $0.966 \pm 0.015$ \\
+    $\log \mathrm{Re}$ from $\boldsymbol{z}_{g}$ (want low)
+      & $0.376 \pm 0.074$ & $\mathbf{-0.139 \pm 0.014}$ \\
+    $\log \mathrm{Re}$ from $\boldsymbol{z}_{\xi}$ (want low, but inert)
+      & $0.200 \pm 0.041$ & $0.596 \pm 0.110$ \\
+    Geometry from $\boldsymbol{z}_{g}$ (want high)$^{\dagger}$
+      & $0.732 \pm 0.018$ & $\mathbf{0.912 \pm 0.049}$ \\
+    Same-Re swap ratio (want $\approx 1$)
+      & $1.50 \pm 0.05$ & $1.33 \pm 0.10$ \\
+    Cross-Re swap ratio (want $\approx 1$)
+      & $2.0 \pm 0.1$ & $\mathbf{1.48 \pm 0.09}$ \\
+    Cross-Re donor MSE (high = decoder follows $\boldsymbol{z}_{\mu}$)
+      & $\approx 0.58$ & $0.573 \pm 0.002$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 \subsection{Comparison against the published FlowBench baselines}
 
 How good is the final model in absolute terms? The FlowBench benchmark
@@ -1199,7 +1248,10 @@ decisively by Run 7 (Table~\ref{tab:probes-run7}): with a static
 geometry encoder reading the SDF, the $\boldsymbol{z}_{g}$ leak closes
 exactly, geometry recovery jumps to $0.93$--$0.98$, transfer improves to
 $1.42$, and the concept-vector cross-talk vanishes. Run 7 is the final
-architecture for this study.
+architecture for this study, and its numbers now carry error bars: the
+three-seed protocol (Table~\ref{tab:multiseed-run7}) confirms the leak
+closure ($-0.14 \pm 0.01$), the geometry gain ($0.91 \pm 0.05$), and the
+transfer improvement ($1.48 \pm 0.09$) as seed-robust effects.
 
 Finally, the field visualizations are in place: a reconstruction example
 from the final model (Figure~\ref{fig:recon}) and the cross-Re transfer
@@ -1217,18 +1269,21 @@ weakness.
 \paragraph{Planned increments, in order.}
 %
 \begin{itemize}
-  \item \textbf{Multi-seed for Run 7} (two more seeds) to put error bars
-        on the new architecture's numbers.
+  \item \textbf{Boundary-layer weighted reconstruction (L3)}, directly
+        motivated by the flat M2 score: an additional reconstruction
+        term restricted to the band $0 \le \mathrm{SDF} \le 0.2$ and
+        normalized by the band's own pixel count, so the thin near-wall
+        region --- a few percent of the fluid pixels, diluted away under
+        the plain loss --- carries real training weight. Implemented as
+        Run 8 (the Run-7 recipe plus this term); training queued.
   \item \textbf{Physics/spectral loss family}: PDE residual (L18) and/or
         spectrum matching (L22), the one loss family not yet ablated.
   \item \textbf{Residual capacity}: shrink the residual block (e.g.\
         $16 \to 4$ dimensions). In Run 7 the residual is Re-readable
-        ($R^2 \approx 0.69$) but functionally inert; a smaller block
+        ($R^2 \approx 0.6$) but functionally inert; a smaller block
         would test whether the readability is even necessary.
   \item \textbf{Loss library extensions}: HSIC (L7), which detects
-        nonlinear dependence between blocks, not just linear correlation;
-        boundary-layer weighted reconstruction (L3), which weights errors
-        near the object surface more heavily.
+        nonlinear dependence between blocks, not just linear correlation.
   \item \textbf{Architecture}: an INR-style implicit decoder, which can
         be queried at any spatial point rather than on a fixed grid.
   \item \textbf{Beyond steady flow}: the dynamics block
